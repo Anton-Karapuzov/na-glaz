@@ -1,0 +1,1736 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>На глаз</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@500;700&family=Unbounded:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+/* Layout idea: a lab bench. Left, the apparatus on drafting paper; right, the lab notebook with the question, the guess and the verdict. One visual world, single theme by choice. */
+:root{
+  color-scheme: dark;
+  --bench:#0b1430;      /* page */
+  --paper:#121e47;      /* apparatus sheet and cards */
+  --rule:rgba(176,194,255,.2);
+  --rule-faint:rgba(176,194,255,.07);
+  --text:#eef1ff;
+  --muted:#9ba9d6;
+  --hit:#ffc233;        /* the event happened */
+  --miss:#6d84dc;       /* it did not */
+  --you:#ff6f86;        /* the player's guess */
+  --display:'Unbounded','Arial Black',system-ui,sans-serif;
+  --body:'Golos Text',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bench);color:var(--text);font:400 16px/1.5 var(--body);-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;padding-top:env(safe-area-inset-top);padding-right:env(safe-area-inset-right);padding-bottom:env(safe-area-inset-bottom);padding-left:env(safe-area-inset-left)}
+.wrap{max-width:1180px;margin:0 auto;padding:20px 20px 40px;display:flex;flex-direction:column;gap:18px}
+[hidden]{display:none!important}
+
+.top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.brand{font:700 22px/1 var(--display);letter-spacing:-.02em}
+.brand i{font-style:normal;color:var(--hit)}
+.modes{display:flex;gap:4px;padding:3px;border:1px solid var(--rule);border-radius:6px}
+.tab{appearance:none;border:0;background:transparent;color:var(--muted);font:500 13px var(--body);padding:7px 12px;border-radius:4px;cursor:pointer}
+.tab[aria-pressed=true]{background:var(--text);color:var(--bench);font-weight:600}
+.band{position:absolute;top:0;bottom:0;background:var(--text);opacity:.45;border-radius:2px}
+.steps{display:flex;gap:6px;list-style:none;margin:0;padding:0}
+.steps li{width:34px;height:8px;border:1.5px solid var(--rule);border-radius:2px}
+.steps li.now{border-color:var(--text)}
+.steps li.done{background:var(--hit);border-color:var(--hit)}
+.total{display:flex;align-items:baseline;gap:8px;font:500 13px var(--body);color:var(--muted)}
+.total b{font:700 22px/1 var(--mono);color:var(--text);font-variant-numeric:tabular-nums}
+
+.board{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);grid-template-rows:auto 1fr;grid-template-areas:"stage ask" "stage ctl";gap:18px 22px;align-items:start}
+.stage{grid-area:stage}.ask{grid-area:ask;padding-top:4px}#guessBox,#runBox,#resultBox{grid-area:ctl}
+@media (max-width:880px){.board{grid-template-columns:minmax(0,1fr);grid-template-rows:auto;grid-template-areas:"ask" "stage" "ctl"}}
+
+.stage{background:var(--paper);border:1px solid var(--rule);border-radius:6px;overflow:hidden}
+.sheet{background-image:linear-gradient(var(--rule-faint) 1px,transparent 1px),linear-gradient(90deg,var(--rule-faint) 1px,transparent 1px);background-size:6.25% 8.3333%}
+canvas{display:block;width:100%;aspect-ratio:4/3}
+.cap{margin:0;padding:12px 44px;border-top:1px solid var(--rule);font-size:14px;color:var(--muted);min-height:45px}
+.meter{padding:34px 44px 30px;border-top:1px solid var(--rule)}
+@media (max-width:520px){.wrap{padding-left:14px;padding-right:14px}.cap,.readout{padding-left:20px;padding-right:20px}.meter{padding-left:28px;padding-right:28px}th,td{padding:8px 5px;font-size:13px}table{min-width:0}}
+.track{position:relative;height:14px;background:rgba(176,194,255,.1);border-radius:2px;
+  background-image:linear-gradient(90deg,transparent calc(25% - 1px),var(--rule) 25%,transparent calc(25% + 1px),transparent calc(50% - 1px),var(--rule) 50%,transparent calc(50% + 1px),transparent calc(75% - 1px),var(--rule) 75%,transparent calc(75% + 1px))}
+.fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--hit);opacity:.85;border-radius:2px}
+.mark{position:absolute;top:-7px;bottom:-7px;width:3px;margin-left:-1.5px;border-radius:2px}
+.mark span{position:absolute;left:50%;transform:translateX(-50%);white-space:nowrap;font:700 12px/1 var(--mono)}
+.mark.you{background:var(--you);transition:left .12s}
+.mark.you span{bottom:calc(100% + 5px);color:var(--you)}
+.mark.truth{background:var(--text)}
+.mark.truth span{top:calc(100% + 5px);color:var(--text)}
+.meter.done .ends{visibility:hidden}
+.ends{display:flex;justify-content:space-between;font:500 11px var(--mono);color:var(--muted);margin-top:22px}
+.readout{margin:0;padding:0 44px 16px;font:500 13px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums;min-height:36px}
+.readout b{color:var(--hit);font-weight:700}
+
+.panel{display:contents}
+.stack{display:flex;flex-direction:column;gap:18px}
+.eyebrow{margin:0;font:500 12px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+h1{margin:0;font:500 clamp(19px,2.3vw,25px)/1.3 var(--display);letter-spacing:-.02em;text-wrap:balance}
+.guess{display:flex;flex-direction:column;gap:12px}
+.guess label{font-size:14px;color:var(--muted)}
+.num{font:700 clamp(54px,8vw,84px)/1 var(--display);color:var(--you);letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--you);height:28px;margin:0}
+.btn{appearance:none;border:0;border-radius:4px;padding:15px 20px;font:700 14px/1 var(--display);cursor:pointer;background:var(--hit);color:#1a1503;align-self:flex-start;transition:transform .08s}
+.btn:hover{filter:brightness(1.08)}
+.btn:active{transform:translateY(1px)}
+.btn.ghost{background:transparent;color:var(--text);border:1.5px solid var(--rule);font-weight:500}
+:focus-visible{outline:2px solid var(--text);outline-offset:3px}
+.tab,.btn,input[type=range],summary{touch-action:manipulation}
+.running{display:flex;flex-direction:column;gap:14px;color:var(--muted);font-size:15px}
+
+.verdict{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.pts{font:700 clamp(44px,6vw,64px)/1 var(--display);color:var(--hit);letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.word{font:500 15px var(--display)}
+.cmp{display:grid;grid-template-columns:repeat(3,auto);justify-content:start;gap:4px 26px;margin:0;font-family:var(--mono)}
+.cmp dt{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);grid-row:1}
+.cmp dd{margin:0;font-size:20px;font-weight:700;grid-row:2;font-variant-numeric:tabular-nums}
+.cmp .y{color:var(--you)}
+.note{border-left:3px solid var(--rule);padding-left:14px;max-width:62ch}
+.note.fact{border-color:var(--hit)}
+.note h2{margin:0 0 4px;font:500 12px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.note p{margin:0;font-size:15px}
+.note a{color:var(--text);font-size:13px;text-underline-offset:3px}
+.note .src{margin-top:8px;color:var(--muted);font-size:13px}
+
+.final{background:var(--paper);border:1px solid var(--rule);border-radius:6px;padding:clamp(22px,4vw,44px);display:flex;flex-direction:column;gap:20px}
+.bigscore{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.bigscore b{font:700 clamp(60px,11vw,120px)/1 var(--display);color:var(--hit);letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+.bigscore span{font:500 15px var(--mono);color:var(--muted)}
+.calc{border:1px solid var(--rule);border-radius:4px;max-width:62ch}
+.calc summary{cursor:pointer;padding:12px 14px;font:500 13px var(--display)}
+.calc[open] summary{border-bottom:1px solid var(--rule)}
+.calc ol{margin:0;padding:14px 14px 14px 36px;display:flex;flex-direction:column;gap:8px;font-size:15px}
+.calc li::marker{font:700 12px var(--mono);color:var(--hit)}
+.more{margin:0;color:var(--muted);font-size:15px}
+.note a:not([href]){text-decoration:none;color:var(--muted)}
+.rank{margin:0;font:500 22px var(--display)}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:500px;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:10px 12px;border-bottom:1px solid var(--rule)}
+th:first-child,td:first-child{text-align:left;padding-left:0}
+th{font:500 11px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+td{font-family:var(--mono);font-size:15px}
+td:first-child{font-family:var(--body)}
+td.y{color:var(--you)} td.p{color:var(--hit);font-weight:700}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">На глаз<i>.</i></div>
+    <div class="modes" role="group" aria-label="Режим игры"><button class="tab" id="modeP" type="button" aria-pressed="true">Вероятности</button><button class="tab" id="modeG" type="button" aria-pressed="false">Глазомер</button></div>
+    <ol class="steps" id="steps" aria-label="Раунды"></ol>
+    <div class="total">Счёт <b id="total">0</b> из <span id="maxTotal">12 000</span></div>
+  </header>
+
+  <main class="board" id="board">
+    <section class="stage" aria-label="Эксперимент">
+      <div class="sheet"><canvas id="cv" width="1280" height="960"></canvas></div>
+      <p class="cap" id="cap"></p>
+      <div class="meter">
+        <div class="track">
+          <div class="fill" id="fill"></div>
+          <div class="band" id="band" hidden></div>
+          <div class="mark you" id="youMark"><span id="youLbl">вы 50%</span></div>
+          <div class="mark truth" id="truthMark" hidden><span id="truthLbl"></span></div>
+        </div>
+        <div class="ends"><span id="endL">0%</span><span id="endR">100%</span></div>
+      </div>
+      <p class="readout" id="readout">10 000 попыток ждут вашего прогноза.</p>
+    </section>
+
+    <section class="panel">
+      <div class="ask stack">
+        <p class="eyebrow" id="roundLbl"></p>
+        <h1 id="question"></h1>
+      </div>
+
+      <div class="guess" id="guessBox">
+        <label for="guess" id="guessLbl">Ваш прогноз вероятности</label>
+        <div class="num"><span id="guessNum">50</span><span id="guessUnit">%</span></div>
+        <input type="range" id="guess" min="0" max="100" step="1" value="50">
+        <button class="btn" id="runBtn" type="button">Запустить 10 000 попыток</button>
+      </div>
+
+      <div class="running" id="runBox" hidden>
+        <span id="runNote">Первые попытки идут медленно, дальше быстрее. Жёлтая полоса показывает долю удачных.</span>
+        <button class="btn ghost" id="skipBtn" type="button">Сразу к результату</button>
+      </div>
+
+      <div class="stack" id="resultBox" hidden>
+        <div class="verdict"><span class="pts" id="pts">+0</span><span class="word" id="word"></span></div>
+        <dl class="cmp">
+          <dt>Вы</dt><dd class="y" id="cYou"></dd>
+          <dt id="lbl2">Точно</dt><dd id="cExact"></dd>
+          <dt id="lbl3">Симуляция</dt><dd id="cSim"></dd>
+        </dl>
+        <div class="note"><h2>Почему так</h2><p id="why"></p></div>
+        <div class="note fact"><h2>Факт</h2><p id="fact"></p><p class="src">Источник: <a id="src" target="_blank" rel="noopener"></a></p></div>
+        <details class="calc" id="calcBox"><summary>Показать расчёт</summary><ol id="calc"></ol></details>
+        <button class="btn" id="nextBtn" type="button">Следующий раунд</button>
+      </div>
+    </section>
+  </main>
+
+  <section class="final" id="final" hidden>
+    <p class="eyebrow">Итог партии</p>
+    <div class="bigscore"><b id="finalScore">0</b><span>из <span id="finalMax">12 000</span></span></div>
+    <p class="rank" id="rank"></p>
+    <p class="more" id="moreNote">В игре 34 уровня: 12 лёгких, 12 средних и 10 сложных. Партия идёт двумя волнами: лёгкий, средний, сложный.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Событие</th><th>Сложность</th><th>Вы</th><th>Точно</th><th>Очки</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table></div>
+    <button class="btn" id="againBtn" type="button">Сыграть ещё раз</button>
+  </section>
+</div>
+
+<script>
+const N = 10000, SLOW = 5, FAST_MS = 3800, MAX_PTS = 2000, PARTY = 6, PATTERN = [1, 2, 3, 1, 2, 3], LVL = ['', '●○○ лёгкий', '●●○ средний', '●●● сложный'];
+const C = {ink:'#eef1ff', dim:'rgba(176,194,255,.32)', faint:'rgba(176,194,255,.07)', line:'rgba(176,194,255,.42)', hit:'#ffc233', miss:'#6d84dc', you:'#ff6f86'};
+const TAU = Math.PI * 2;
+const lerp = (a, b, t) => a + (b - a) * t;
+const now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
+
+//<events>
+const MONTHS = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+const MDAYS = [31,28,31,30,31,30,31,31,30,31,30,31];
+const DAYX = [], DAYY = [];
+MDAYS.forEach((len, m) => { for (let d = 0; d < len; d++) { DAYX.push(84 + d * 17); DAYY.push(30 + m * 17); } });
+const TALLY = 795;
+
+function birthdayExact() { let q = 1; for (let k = 0; k < 23; k++) q *= (365 - k) / 365; return 1 - q; }
+function galtonPos(r, p) {
+  const seg = Math.min(13, p * 13), j = Math.min(12, Math.floor(seg)), f = p >= 1 ? 1 : seg - j;
+  const xj = 320 + (r.R[j] - j / 2) * 40, yj = 30 + j * 24;
+  if (j >= 12) return [xj, lerp(yj, 450, f * f)];
+  const xn = 320 + (r.R[j + 1] - (j + 1) / 2) * 40;
+  return [lerp(xj, xn, f), lerp(yj, yj + 24, f) - Math.sin(Math.PI * f) * 7];
+}
+
+const TINT = 'rgba(176,194,255,.14)';
+let FS = 1;
+const rnd = n => Math.floor(Math.random() * n);
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function tallyInit(S) { S.tally = new Uint8Array(TALLY); S.c = 0; S.last = null; }
+function tallyCommit(S, r) { S.tally[S.c % TALLY] = r.hit ? 2 : 1; S.c++; S.last = r; }
+function drawTally(g, S, label) {
+  g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillStyle = C.dim; g.font = '500 ' + Math.round(11 * Math.min(FS, 1.35)) + 'px "JetBrains Mono", monospace';
+  g.fillText(label, 84, 292);
+  for (let i = 0; i < TALLY; i++) {
+    const v = S.tally[i]; g.fillStyle = v === 2 ? C.hit : v === 1 ? C.miss : C.faint;
+    g.fillRect(84 + (i % 53) * 10, 306 + Math.floor(i / 53) * 10, 8, 8);
+  }
+}
+function statusLine(g, text, col, y) {
+  g.font = '500 ' + Math.round(14 * FS) + 'px "Golos Text", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = col; g.fillText(text, 320, y || 262);
+}
+const clamp01 = t => t < 0 ? 0 : t > 1 ? 1 : t;
+const ease = t => 1 - Math.pow(1 - clamp01(t), 3);
+const back = t => { t = clamp01(t) - 1; return 1 + 2.70158 * t * t * t + 1.70158 * t * t; };
+const INKD = '#0b1430', SKIN = '#f4c9a0', MONO = ' "JetBrains Mono", monospace';
+const PIPS = [[], [4], [0, 8], [0, 4, 8], [0, 2, 6, 8], [0, 2, 4, 6, 8], [0, 2, 3, 5, 6, 8]];
+const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'В', 'Д', 'К', 'Т'];
+function rrect(g, x, y, w, h, r) {
+  g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+}
+function dieFace(g, s, v, lp, hot) {
+  if (lp <= 0) { rrect(g, -s / 2, -s / 2, s, s, s * .18); g.fillStyle = TINT; g.fill(); g.strokeStyle = C.dim; g.lineWidth = 1; g.stroke(); return; }
+  const rolling = lp < .75;
+  if (rolling) { g.rotate((1 - lp / .75) * 2.4); v = 1 + rnd(6); }
+  rrect(g, -s / 2, -s / 2, s, s, s * .18); g.fillStyle = hot && !rolling ? C.hit : '#f3f5ff'; g.fill();
+  g.fillStyle = INKD;
+  for (const k of PIPS[v]) { g.beginPath(); g.arc((k % 3 - 1) * s * .27, (Math.floor(k / 3) - 1) * s * .27, s * .085, 0, TAU); g.fill(); }
+}
+function carIcon(g, W) {
+  g.fillStyle = '#e0484f'; g.beginPath(); g.moveTo(-W * .27, -W * .1); g.lineTo(-W * .15, -W * .3); g.lineTo(W * .15, -W * .3); g.lineTo(W * .3, -W * .1); g.closePath(); g.fill();
+  rrect(g, -W / 2, -W * .12, W, W * .24, W * .07); g.fill();
+  g.fillStyle = '#bfe3ff'; g.beginPath(); g.moveTo(-W * .19, -W * .13); g.lineTo(-W * .11, -W * .26); g.lineTo(W * .12, -W * .26); g.lineTo(W * .21, -W * .13); g.closePath(); g.fill();
+  for (const k of [-1, 1]) { g.fillStyle = '#10131f'; g.beginPath(); g.arc(k * W * .28, W * .12, W * .11, 0, TAU); g.fill(); g.fillStyle = '#c9d3f0'; g.beginPath(); g.arc(k * W * .28, W * .12, W * .045, 0, TAU); g.fill(); }
+}
+function goatIcon(g, W) {
+  const fur = '#ece7da';
+  g.strokeStyle = fur; g.lineWidth = W * .07; g.lineCap = 'round'; g.beginPath();
+  for (const x of [-.26, -.14, .12, .24]) { g.moveTo(x * W, W * .08); g.lineTo(x * W, W * .38); }
+  g.moveTo(-W * .36, -W * .04); g.lineTo(-W * .44, -W * .14); g.stroke();
+  g.fillStyle = fur; g.beginPath(); g.ellipse(-W * .02, 0, W * .36, W * .19, 0, 0, TAU); g.fill();
+  g.beginPath(); g.ellipse(W * .36, -W * .22, W * .15, W * .12, -.3, 0, TAU); g.fill();
+  g.beginPath(); g.moveTo(W * .42, -W * .12); g.lineTo(W * .46, W * .04); g.lineTo(W * .36, -W * .1); g.closePath(); g.fill();
+  g.strokeStyle = '#a79a80'; g.lineWidth = W * .04; g.beginPath(); g.moveTo(W * .3, -W * .32); g.quadraticCurveTo(W * .2, -W * .5, W * .1, -W * .44); g.moveTo(W * .38, -W * .33); g.quadraticCurveTo(W * .32, -W * .54, W * .2, -W * .52); g.stroke();
+  g.fillStyle = INKD; g.beginPath(); g.arc(W * .4, -W * .25, W * .022, 0, TAU); g.fill(); g.lineCap = 'butt';
+}
+function personIcon(g, s, col) {
+  g.fillStyle = col; g.beginPath(); g.arc(0, -s * .2, s * .17, 0, TAU); g.fill();
+  g.beginPath(); g.moveTo(-s * .3, s * .42); g.quadraticCurveTo(-s * .3, s * .02, 0, s * .02); g.quadraticCurveTo(s * .3, s * .02, s * .3, s * .42); g.closePath(); g.fill();
+}
+const DRAW = {
+  tile(g, w, h, it, lp, o) {
+    rrect(g, -w / 2, -h / 2, w, h, 6);
+    if (lp <= 0) { g.strokeStyle = C.dim; g.lineWidth = 1; g.stroke(); return; }
+    g.fillStyle = it.col || TINT; g.fill();
+    if (it.t) { g.font = (o.font || '700 18px') + MONO; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = C.ink; g.fillText(it.t, 0, 1); }
+  },
+  day(g, w, h, it, lp, o) { DRAW.tile(g, w, h, it, 1, o); },
+  die(g, w, h, it, lp) { dieFace(g, Math.min(w, h), it.v, lp, it.hl === 1); },
+  dice2(g, w, h, it, lp) { const s = h - 2; for (const k of [0, 1]) { g.save(); g.translate((k ? 1 : -1) * (s / 2 + 2), 0); dieFace(g, s, k ? it.b : it.a, lp, it.hl === 1); g.restore(); } },
+  coin(g, w, h, it, lp) {
+    const r = Math.min(w, h) / 2;
+    if (lp <= 0) { g.beginPath(); g.arc(0, 0, r - 1, 0, TAU); g.fillStyle = TINT; g.fill(); g.strokeStyle = C.dim; g.lineWidth = 1; g.stroke(); return; }
+    let v = it.v;
+    if (lp < 1) { g.translate(0, -Math.sin(lp * Math.PI) * r * .9); g.scale(1, Math.max(.1, Math.abs(Math.cos(lp * Math.PI * 3)))); if (lp < .85) v = Math.floor(lp * 6) % 2; }
+    g.beginPath(); g.arc(0, 0, r, 0, TAU); g.fillStyle = v ? '#f2c14e' : '#c9d3f0'; g.fill();
+    g.beginPath(); g.arc(0, 0, r * .8, 0, TAU); g.strokeStyle = v ? '#b98a1e' : '#8793bd'; g.lineWidth = Math.max(1.5, r * .07); g.stroke();
+    g.font = '700 ' + Math.round(r * .82) + 'px' + MONO; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = INKD; g.fillText(v ? 'О' : 'Р', 0, r * .06);
+  },
+  card(g, w, h, it, lp) {
+    rrect(g, -w / 2, -h / 2, w, h, 8);
+    if (lp < .5) {
+      g.scale(1, 1); g.fillStyle = '#2b3f93'; g.fill(); g.strokeStyle = '#c9d3f0'; g.lineWidth = 2; g.stroke();
+      g.strokeStyle = 'rgba(201,211,240,.5)'; g.lineWidth = 1; g.strokeRect(-w / 2 + 8, -h / 2 + 8, w - 16, h - 16); return;
+    }
+    g.fillStyle = '#f6f7ff'; g.fill();
+    const col = it.suit < 2 ? '#d6323a' : '#141b33', sym = '♥♦♣♠'[it.suit];
+    g.fillStyle = col; g.textAlign = 'left'; g.textBaseline = 'top'; g.font = '700 ' + Math.round(h * .17) + 'px' + MONO; g.fillText(it.rank, -w / 2 + 8, -h / 2 + 8);
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = Math.round(h * .46) + 'px serif'; g.fillText(sym, 0, h * .08);
+  },
+  kid(g, w, h, it, lp) {
+    const dim = lp <= 0, u = Math.min(w, h) / 100, boy = it.boy;
+    const skin = dim ? C.dim : SKIN, hair = dim ? C.dim : (boy ? '#5a3b22' : '#8a4a1f'), cloth = dim ? C.dim : (boy ? '#35b5c9' : '#ff86ac'), leg = dim ? C.dim : '#3b4a86';
+    g.fillStyle = leg; g.fillRect(-11 * u, 26 * u, 8 * u, 20 * u); g.fillRect(3 * u, 26 * u, 8 * u, 20 * u);
+    g.fillStyle = cloth;
+    if (boy || dim) rrect(g, -15 * u, -8 * u, 30 * u, 38 * u, 6 * u); else { g.beginPath(); g.moveTo(-10 * u, -8 * u); g.lineTo(10 * u, -8 * u); g.lineTo(23 * u, 32 * u); g.lineTo(-23 * u, 32 * u); g.closePath(); }
+    g.fill();
+    if (!boy && !dim) { g.fillStyle = hair; g.beginPath(); g.arc(-19 * u, -24 * u, 7 * u, 0, TAU); g.fill(); g.beginPath(); g.arc(19 * u, -24 * u, 7 * u, 0, TAU); g.fill(); }
+    g.fillStyle = skin; g.beginPath(); g.arc(0, -28 * u, 16 * u, 0, TAU); g.fill();
+    if (dim) { g.fillStyle = C.ink; g.font = '700 ' + Math.round(22 * u) + 'px' + MONO; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('?', 0, -27 * u); return; }
+    g.fillStyle = hair; g.beginPath(); g.arc(0, -30 * u, 16.5 * u, Math.PI * 1.08, Math.PI * 1.92); g.closePath(); g.fill();
+    g.fillStyle = INKD; g.beginPath(); g.arc(-6 * u, -26 * u, 1.9 * u, 0, TAU); g.fill(); g.beginPath(); g.arc(6 * u, -26 * u, 1.9 * u, 0, TAU); g.fill();
+    g.strokeStyle = INKD; g.lineWidth = 1.5 * u; g.beginPath(); g.arc(0, -23 * u, 6 * u, .25 * Math.PI, .75 * Math.PI); g.stroke();
+  },
+  person(g, w, h, it, lp) { personIcon(g, Math.min(w, h), lp <= 0 ? C.dim : it.col || C.ink); },
+  door(g, w, h, it, lp, o) {
+    const x = -w / 2, y = -h / 2, open = lp > 0 && it.state;
+    g.fillStyle = '#060a1a'; g.fillRect(x, y, w, h);
+    if (open) {
+      g.save(); g.translate(0, h * .2); it.what === 'car' ? carIcon(g, w * .82) : goatIcon(g, w * .66); g.restore();
+      g.fillStyle = '#6b452c'; g.beginPath(); g.moveTo(x, y); g.lineTo(x - w * .17, y + h * .07); g.lineTo(x - w * .17, y + h * .93); g.lineTo(x, y + h); g.closePath(); g.fill();
+    } else {
+      g.fillStyle = '#9a643f'; g.fillRect(x, y, w, h);
+      g.strokeStyle = '#6b452c'; g.lineWidth = 2; g.strokeRect(x + w * .14, y + h * .09, w * .72, h * .36); g.strokeRect(x + w * .14, y + h * .55, w * .72, h * .36);
+      g.fillStyle = '#f2c14e'; g.beginPath(); g.arc(x + w * .86, h * .02, w * .05, 0, TAU); g.fill();
+      g.fillStyle = '#f3e3d0'; g.font = '700 22px' + MONO; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(it.num, 0, y + h * .27);
+    }
+    g.strokeStyle = '#c9d3f0'; g.lineWidth = 3; g.strokeRect(x, y, w, h);
+    if (lp > 0 && it.tag) { g.fillStyle = C.ink; g.font = '700 12px' + MONO; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(it.tag, 0, y - 14); }
+  },
+  ball(g, w, h, it) {
+    const r = Math.min(w, h) * .44; g.translate(0, -(it.lift || 0) * h * .9);
+    g.beginPath(); g.arc(0, 0, r, 0, TAU); g.fillStyle = it.col; g.fill();
+    g.beginPath(); g.arc(-r * .32, -r * .34, r * .24, 0, TAU); g.fillStyle = 'rgba(255,255,255,.55)'; g.fill();
+    if (it.ring) { g.beginPath(); g.arc(0, 0, r + 5, 0, TAU); g.strokeStyle = C.ink; g.lineWidth = 3; g.stroke(); }
+  },
+  chip(g, w, h, it, lp) {
+    const r = Math.min(w, h) / 2; g.beginPath(); g.arc(0, 0, r, 0, TAU);
+    if (lp <= 0) { g.strokeStyle = C.dim; g.lineWidth = 1; g.stroke(); return; }
+    g.fillStyle = it.col; g.fill(); g.strokeStyle = 'rgba(255,255,255,.35)'; g.lineWidth = 1; g.stroke();
+  },
+  hand(g, w, h, it, lp, o) {
+    const s = Math.min(w, h), edge = '#b98558';
+    if (lp <= 0) { DRAW.tile(g, w, h, {t: '?'}, 1, {font: '700 30px'}); return; }
+    g.fillStyle = SKIN; g.lineCap = 'round';
+    if (it.g === 0) { g.beginPath(); g.arc(0, 2, s * .31, 0, TAU); g.fill(); g.strokeStyle = edge; g.lineWidth = 2; g.beginPath(); for (const k of [-1, 0, 1]) { g.moveTo(k * s * .14 - s * .05, -s * .12); g.quadraticCurveTo(k * s * .14, -s * .2, k * s * .14 + s * .05, -s * .12); } g.stroke(); }
+    else if (it.g === 2) { rrect(g, -s * .25, -s * .37, s * .5, s * .74, s * .1); g.fill(); g.strokeStyle = edge; g.lineWidth = 2; g.beginPath(); for (const k of [-1, 0, 1]) { g.moveTo(k * s * .125, -s * .37); g.lineTo(k * s * .125, -s * .02); } g.stroke(); }
+    else { g.strokeStyle = SKIN; g.lineWidth = s * .13; g.beginPath(); g.moveTo(-s * .04, s * .08); g.lineTo(-s * .2, -s * .36); g.moveTo(s * .04, s * .08); g.lineTo(s * .2, -s * .36); g.stroke(); g.beginPath(); g.arc(0, s * .17, s * .22, 0, TAU); g.fill(); }
+    g.lineCap = 'butt';
+  }
+};
+function drawTokens(g, items, o, p, done, idle) {
+  const w = o.w || 44, h = o.h || 44, gap = o.gap == null ? 8 : o.gap, n = items.length, per = o.per || n, rows = Math.ceil(n / per);
+  const y0 = 140 - (rows * (h + gap) - gap) / 2, pad = Math.min(4, gap / 2);
+  items.forEach((it, i) => {
+    const row = Math.floor(i / per), inRow = Math.min(per, n - row * per);
+    const x = 320 - (inRow * (w + gap) - gap) / 2 + (i % per) * (w + gap), y = y0 + row * (h + gap), kind = it.kind || 'tile';
+    let lp = idle ? 0 : done ? 1 : it.lp != null ? clamp01(it.lp) : o.staged ? 1 : clamp01(p * n - i);
+    g.save(); g.translate(x + w / 2, y + h / 2);
+    if (lp > 0 && lp < 1 && kind !== 'coin' && kind !== 'die' && kind !== 'dice2') { const s = back(lp / .6); g.scale(s, s); }
+    DRAW[kind](g, w, h, it, lp, o); g.restore();
+    if (done && !idle && it.hl) { const col = it.hl === 2 ? C.miss : C.hit; g.save(); g.shadowColor = col; g.shadowBlur = 18; g.strokeStyle = col; g.lineWidth = 3; rrect(g, x - pad, y - pad, w + 2 * pad, h + 2 * pad, 9); g.stroke(); g.restore(); }
+    if (it.cap && !idle) { g.font = '500 ' + Math.round(13 * FS) + 'px "Golos Text", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = C.line; g.fillText(it.cap, x + w / 2, y + h + 8 + 8 * FS); }
+  });
+}
+function seq(o) {
+  return Object.assign({
+    slowMs: 1300, commit: tallyCommit,
+    init(S) { tallyInit(S); S.demo = o.trial(); },
+    draw(g, S, cur, p) {
+      const r = cur || S.last, done = !cur || p >= 1, q = done ? 1 : p;
+      if (o.scene) o.scene(g, r, q, done);
+      else if (r) drawTokens(g, o.items(r, q), o, q, done, false);
+      else drawTokens(g, o.items(S.demo, 0), o, 0, false, true);
+      if (r && done) statusLine(g, o.status(r), r.hit ? C.hit : C.miss);
+      drawTally(g, S, o.unit);
+    }
+  }, o);
+}
+function dice(n) { const d = []; for (let i = 0; i < n; i++) d.push(1 + rnd(6)); return d; }
+function rouletteExact(n, L) {
+  let s = new Array(L).fill(0); s[0] = 1;
+  for (let i = 0; i < n; i++) {
+    const t = new Array(L).fill(0);
+    for (let r = 0; r < L; r++) { const v = s[r]; if (!v) continue; t[0] += v / 37; if (r === 0) t[1] += v * 36 / 37; else { t[1] += v * 18 / 37; if (r + 1 < L) t[r + 1] += v * 18 / 37; } }
+    s = t;
+  }
+  return 1 - s.reduce((a, b) => a + b, 0);
+}
+const ARTIST = ['#4a63d8', '#2d8f86', '#8656c9', '#b65a7a', '#5b6c96'];
+const ROUL = ['#2fa66a', '#e0484f', '#04060d'];
+const onCircle = (a, R, cx, cy) => [cx + R * Math.cos(a), cy + R * Math.sin(a)];
+
+const EVENTS = [
+{
+  name: 'Дротики', slowMs: 800, exact: Math.PI / 4,
+  question: 'Дротик попадает в случайную точку квадратной доски. С какой вероятностью он окажется внутри вписанного круга?',
+  why: 'Круг занимает π/4 площади квадрата, это 78,5%. Случайные точки по сути измеряют площадь: чем их больше, тем точнее доля.',
+  fact: 'Так работает метод Монте-Карло. Станислав Улам придумал его в 1946 году, когда выздоравливал после болезни и раскладывал пасьянсы: проще сыграть много партий и посчитать долю удачных, чем вывести формулу. Название предложил Николас Метрополис в честь казино, куда ездил играть дядя Улама.',
+  srcName: 'Лос-Аламосская национальная лаборатория, история метода Монте-Карло',
+  srcUrl: 'https://discover.lanl.gov/publications/actinide-research-quarterly/first-quarter-2023/hitting-the-jackpot-the-birth-of-the-monte-carlo-method/',
+  init(S) { S.x = new Float32Array(N + 8); S.y = new Float32Array(N + 8); S.h = new Uint8Array(N + 8); S.k = 0; },
+  trial() { const x = Math.random() * 2 - 1, y = Math.random() * 2 - 1; return {x, y, hit: x * x + y * y <= 1}; },
+  commit(S, r) { S.x[S.k] = r.x; S.y[S.k] = r.y; S.h[S.k] = r.hit ? 1 : 0; S.k++; },
+  draw(g, S, cur, p) {
+    const s = 200, cx = 320, cy = 240;
+    g.lineWidth = 1.5; g.strokeStyle = C.line; g.strokeRect(cx - s, cy - s, 2 * s, 2 * s);
+    g.setLineDash([3, 7]); g.strokeStyle = C.dim; g.beginPath(); g.arc(cx, cy, s, 0, TAU); g.stroke(); g.setLineDash([]);
+    const sz = S.k < 40 ? 7 : S.k < 400 ? 4 : S.k < 3000 ? 2.6 : 2;
+    for (let pass = 0; pass < 2; pass++) {
+      g.fillStyle = pass ? C.hit : C.miss; g.globalAlpha = pass ? .95 : .8;
+      for (let i = 0; i < S.k; i++) if (S.h[i] === pass) g.fillRect(cx + S.x[i] * s - sz / 2, cy + S.y[i] * s - sz / 2, sz, sz);
+    }
+    g.globalAlpha = 1;
+    if (cur) {
+      const x = cx + cur.x * s, y = cy + cur.y * s;
+      g.strokeStyle = C.ink; g.globalAlpha = .25 + .75 * p; g.lineWidth = 2;
+      g.beginPath(); g.arc(x, y, 6 + 46 * (1 - p) * (1 - p), 0, TAU); g.stroke(); g.globalAlpha = 1;
+      g.fillStyle = p >= 1 ? (cur.hit ? C.hit : C.miss) : C.ink;
+      g.beginPath(); g.arc(x, y, 5, 0, TAU); g.fill();
+    }
+  }
+},
+{
+  name: 'Дни рождения', slowMs: 1700, exact: birthdayExact(),
+  question: 'В комнате 23 случайных человека. С какой вероятностью хотя бы у двоих совпадёт день рождения?',
+  why: 'Совпасть может любая пара, а пар в группе из 23 человек целых 253. Расчёт сделан для 365 равновероятных дней.',
+  fact: 'На чемпионате мира по футболу 2014 года было 32 сборные, в заявке каждой ровно 23 игрока. Би-би-си сверила дни рождения по официальным спискам ФИФА: совпадения нашлись у 16 команд, ровно у половины. Вместе с чемпионатом 2010 года получилась 31 команда из 64.',
+  srcName: 'BBC News Magazine, «The birthday paradox at the World Cup», 2014',
+  srcUrl: 'https://www.bbc.com/news/magazine-27835311',
+  init(S) { S.tally = new Uint8Array(TALLY); S.c = 0; S.last = null; },
+  trial() {
+    const days = [], seen = new Uint8Array(365); let hit = false;
+    for (let i = 0; i < 23; i++) { const d = Math.floor(Math.random() * 365); if (seen[d]) hit = true; seen[d]++; days.push(d); }
+    return {days, hit};
+  },
+  commit(S, r) { S.tally[S.c % TALLY] = r.hit ? 2 : 1; S.c++; S.last = r; },
+  draw(g, S, cur, p) {
+    g.font = '500 11px "JetBrains Mono", monospace'; g.textBaseline = 'middle'; g.textAlign = 'right'; g.fillStyle = C.dim;
+    MONTHS.forEach((m, i) => g.fillText(m, 66, 30 + i * 17));
+    g.fillStyle = C.dim; for (let d = 0; d < 365; d++) { g.beginPath(); g.arc(DAYX[d], DAYY[d], 2, 0, TAU); g.fill(); }
+    const r = cur || S.last, k = cur ? Math.min(23, Math.ceil(p * 23)) : 23;
+    g.textAlign = 'left'; g.font = '500 14px "Golos Text", sans-serif';
+    if (r) {
+      const cnt = {}; for (let i = 0; i < k; i++) cnt[r.days[i]] = (cnt[r.days[i]] || 0) + 1;
+      let dup = false;
+      for (const d in cnt) {
+        const two = cnt[d] > 1; dup = dup || two;
+        g.fillStyle = two ? C.hit : C.ink; g.beginPath(); g.arc(DAYX[d], DAYY[d], two ? 6.5 : 4.2, 0, TAU); g.fill();
+        if (two) { g.strokeStyle = C.hit; g.globalAlpha = .5; g.lineWidth = 2; g.beginPath(); g.arc(DAYX[d], DAYY[d], 11, 0, TAU); g.stroke(); g.globalAlpha = 1; }
+      }
+      if (cur && k < 23) { g.fillStyle = C.ink; g.fillText('Входит человек ' + k + ' из 23', 84, 254); }
+      else { g.fillStyle = dup ? C.hit : C.miss; g.fillText(dup ? 'Есть совпадение' : 'Совпадений нет', 84, 254); }
+    }
+    g.fillStyle = C.dim; g.font = '500 11px "JetBrains Mono", monospace';
+    g.fillText('ОДИН КВАДРАТ — ОДНА ГРУППА ИЗ 23 ЧЕЛОВЕК', 84, 292);
+    for (let i = 0; i < TALLY; i++) {
+      const v = S.tally[i]; g.fillStyle = v === 2 ? C.hit : v === 1 ? C.miss : C.faint;
+      g.fillRect(84 + (i % 53) * 10, 306 + Math.floor(i / 53) * 10, 8, 8);
+    }
+  }
+},
+{
+  name: 'Доска Гальтона', slowMs: 1900, exact: 924 / 4096,
+  question: 'Шарик падает через 12 рядов гвоздей и на каждом отскакивает влево или вправо с равными шансами. С какой вероятностью он окажется в центральной лунке?',
+  why: 'Путей вниз всего 4 096, в центр ведут 924 из них: нужно ровно 6 отскоков вправо из 12. Центральная лунка самая вероятная, но в неё попадает меньше четверти шариков.',
+  fact: 'Прибор придумал Фрэнсис Гальтон в 1873 году, чтобы показать, как из случайных отскоков складывается колоколообразная кривая. В феврале 1874 года он демонстрировал его на лекции в Лондоне, а подробно описал в книге «Естественная наследственность» (1889). Оригинал хранится в Лондоне.',
+  srcName: 'Kunert, Montag, Pöhlmann. The quincunx: history and mathematics. Statistical Papers, 2001',
+  srcUrl: 'https://link.springer.com/article/10.1007/s003620100048',
+  init(S) { S.bins = new Array(13).fill(0); S.balls = []; S.spawn = 0; },
+  trial() {
+    const R = [0]; for (let i = 0; i < 12; i++) R.push(R[i] + (Math.random() < .5 ? 1 : 0));
+    return {R, bin: R[12], hit: R[12] === 6};
+  },
+  commit(S, r) {
+    S.bins[r.bin]++;
+    if (S.fast && S.balls.length < 26) { const t = now(); if (t - S.spawn > 45) { S.spawn = t; S.balls.push({r, t0: t}); } }
+  },
+  draw(g, S, cur, p) {
+    g.fillStyle = C.line;
+    for (let r = 0; r < 12; r++) for (let i = 0; i <= r; i++) { g.beginPath(); g.arc(320 + (i - r / 2) * 40, 40 + r * 24, 2.6, 0, TAU); g.fill(); }
+    const max = Math.max(8, ...S.bins);
+    for (let b = 0; b < 13; b++) {
+      const h = S.bins[b] / max * 128, x = 320 + (b - 6) * 40;
+      g.fillStyle = b === 6 ? C.hit : C.miss; g.globalAlpha = b === 6 ? 1 : .75; g.fillRect(x - 15, 462 - h, 30, h); g.globalAlpha = 1;
+    }
+    g.strokeStyle = C.dim; g.lineWidth = 1; g.beginPath();
+    for (let b = 0; b <= 13; b++) { const x = 320 + (b - 6.5) * 40; g.moveTo(x, 326); g.lineTo(x, 462); }
+    g.moveTo(60, 462.5); g.lineTo(580, 462.5); g.stroke();
+    g.strokeStyle = C.hit; g.lineWidth = 2; g.strokeRect(300, 326, 40, 136);
+    g.fillStyle = C.hit; g.font = '500 11px "JetBrains Mono", monospace'; g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.fillText('ЦЕНТР', 320, 476);
+    const t = now(); S.balls = S.balls.filter(b => t - b.t0 < 650);
+    g.fillStyle = C.ink; g.globalAlpha = .8;
+    for (const b of S.balls) { const q = galtonPos(b.r, (t - b.t0) / 650); g.beginPath(); g.arc(q[0], q[1], 3.5, 0, TAU); g.fill(); }
+    g.globalAlpha = 1;
+    if (cur) { const q = galtonPos(cur, p); g.fillStyle = p >= 1 ? (cur.hit ? C.hit : C.miss) : C.ink; g.beginPath(); g.arc(q[0], q[1], 6, 0, TAU); g.fill(); }
+  }
+},
+{
+  name: 'Игла Бюффона', slowMs: 900, exact: 2 / Math.PI,
+  question: 'Иглу бросают на лист с параллельными линиями. Длина иглы равна расстоянию между линиями. С какой вероятностью игла пересечёт линию?',
+  why: 'Ответ равен 2/π, это 63,7%. Важно не только место падения, но и угол: игла, лежащая почти вдоль линий, пересекает их редко. Из-за усреднения по углам в ответе появляется π.',
+  fact: 'Задачу поставил граф де Бюффон в XVIII веке, решение он опубликовал в 1777 году. В 1901 году итальянец Марио Лаццарини сообщил, что бросил иглу 3 408 раз (она была чуть короче шага линий) и получил π с шестью верными знаками после запятой. Позже математики показали, что такая точность почти невозможна случайно: скорее всего, он остановился на удобном числе бросков.',
+  srcName: 'Badger L. Lazzarini’s Lucky Approximation of π. Mathematics Magazine, 1994',
+  srcUrl: 'https://doi.org/10.2307/2690682',
+  init(S) { S.x = new Float32Array(N + 8); S.y = new Float32Array(N + 8); S.a = new Float32Array(N + 8); S.h = new Uint8Array(N + 8); S.k = 0; },
+  trial() {
+    const x = 20 + Math.random() * 600, y = Math.random() * 480, a = Math.random() * Math.PI, dy = 30 * Math.sin(a);
+    return {x, y, a, hit: Math.floor((y - dy - 30) / 60) !== Math.floor((y + dy - 30) / 60)};
+  },
+  commit(S, r) { S.x[S.k] = r.x; S.y[S.k] = r.y; S.a[S.k] = r.a; S.h[S.k] = r.hit ? 1 : 0; S.k++; },
+  draw(g, S, cur, p) {
+    g.strokeStyle = C.line; g.lineWidth = 1.5; g.beginPath();
+    for (let k = 0; k < 8; k++) { g.moveTo(0, 30 + k * 60); g.lineTo(640, 30 + k * 60); } g.stroke();
+    const from = Math.max(0, S.k - 700);
+    g.lineWidth = S.k < 60 ? 2.6 : 1.5; g.lineCap = 'round';
+    for (let pass = 0; pass < 2; pass++) {
+      g.strokeStyle = pass ? C.hit : C.miss; g.globalAlpha = pass ? .9 : .6; g.beginPath();
+      for (let i = from; i < S.k; i++) if (S.h[i] === pass) {
+        const dx = 30 * Math.cos(S.a[i]), dy = 30 * Math.sin(S.a[i]);
+        g.moveTo(S.x[i] - dx, S.y[i] - dy); g.lineTo(S.x[i] + dx, S.y[i] + dy);
+      }
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+    if (cur) {
+      const e = (1 - p) * (1 - p), a = cur.a + e * 3, L = 30 * (1 + e * 1.3);
+      g.strokeStyle = p >= 1 ? (cur.hit ? C.hit : C.miss) : C.ink; g.globalAlpha = .3 + .7 * p; g.lineWidth = 3.5;
+      g.beginPath(); g.moveTo(cur.x - L * Math.cos(a), cur.y - L * Math.sin(a)); g.lineTo(cur.x + L * Math.cos(a), cur.y + L * Math.sin(a)); g.stroke();
+      g.globalAlpha = 1;
+    }
+    g.lineCap = 'butt';
+  }
+},
+{
+  name: 'Сломанная палка', slowMs: 1500, exact: .25, init: tallyInit, commit: tallyCommit,
+  question: 'Палку ломают в двух случайных местах. С какой вероятностью из трёх кусков можно сложить треугольник?',
+  why: 'Треугольник получается, только если ни один кусок не длиннее половины палки. Среди всех способов сломать палку таких ровно четверть.',
+  fact: 'Задача известна как минимум с 1854 года: она была в экзаменационном сборнике Кембриджского университета, и ответ 1/4 студенты должны были доказать. Позже её разбирали Пуанкаре и Мартин Гарднер.',
+  srcName: 'Ionaşcu, Prăjitură. Things to do with a broken stick, 2013', srcUrl: 'https://arxiv.org/abs/1009.0890',
+  trial() { const u = Math.random(), v = Math.random(), a = Math.min(u, v), b = Math.max(u, v), L = [a, b - a, 1 - b]; return {a, b, L, hit: Math.max(L[0], L[1], L[2]) < .5}; },
+  draw(g, S, cur, p) {
+    const r = cur || S.last, x0 = 120, W = 400, y = 40, q = cur ? p : 1;
+    const cuts = r ? [0].concat(q > .15 ? [r.a] : [], q > .35 ? [r.b] : [], [1]) : [0, 1];
+    g.lineCap = 'round'; g.strokeStyle = C.ink; g.lineWidth = 6; g.beginPath();
+    for (let i = 0; i + 1 < cuts.length; i++) { g.moveTo(x0 + cuts[i] * W + (i ? 5 : 0), y); g.lineTo(x0 + cuts[i + 1] * W - (i + 2 < cuts.length ? 5 : 0), y); }
+    g.stroke();
+    if (r && q > .55) {
+      const s = r.L.slice().sort((m, n) => n - m).map(v => v * W), bx = 320 - s[0] / 2, by = 258, col = r.hit ? C.hit : C.miss;
+      g.globalAlpha = Math.min(1, (q - .55) / .3); g.strokeStyle = col; g.lineWidth = 5; g.lineJoin = 'round'; g.beginPath();
+      if (r.hit) {
+        const xa = (s[0] * s[0] + s[1] * s[1] - s[2] * s[2]) / (2 * s[0]), ya = Math.sqrt(Math.max(0, s[1] * s[1] - xa * xa));
+        g.moveTo(bx, by); g.lineTo(bx + s[0], by); g.lineTo(bx + xa, by - ya); g.closePath(); g.stroke();
+        g.fillStyle = col; g.globalAlpha *= .18; g.fill();
+      } else {
+        const c = Math.cos(.6), n = Math.sin(.6);
+        g.moveTo(bx + s[1] * c, by - s[1] * n); g.lineTo(bx, by); g.lineTo(bx + s[0], by); g.lineTo(bx + s[0] - s[2] * c, by - s[2] * n); g.stroke();
+      }
+      g.globalAlpha = 1;
+    }
+    g.lineCap = 'butt'; drawTally(g, S, 'ОДИН КВАДРАТ — ОДНА ПАЛКА');
+  }
+},
+{
+  name: 'Центр в треугольнике', slowMs: 1300, exact: .25,
+  question: 'На окружности выбирают три случайные точки и соединяют их в треугольник. С какой вероятностью центр окружности окажется внутри треугольника?',
+  why: 'Центр попадает внутрь, только если три точки не умещаются на одной полуокружности. А умещаются они в трёх случаях из четырёх.',
+  fact: 'Трёхмерная версия этой задачи, с четырьмя точками на сфере и ответом 1/8, была последней и самой трудной задачей студенческой олимпиады Патнема 1992 года (задача A6).',
+  srcName: 'William Lowell Putnam Mathematical Competition, 1992, задача A6',
+  init(S) { S.tr = []; },
+  trial() { const a = [Math.random() * TAU, Math.random() * TAU, Math.random() * TAU].sort((x, y) => x - y); return {a, hit: Math.max(a[1] - a[0], a[2] - a[1], TAU - a[2] + a[0]) < Math.PI}; },
+  commit(S, r) { S.tr.push(r); if (S.tr.length > 70) S.tr.shift(); },
+  draw(g, S, cur, p) {
+    const P = a => onCircle(a, 200, 320, 240), tri = r => { g.beginPath(); r.a.forEach((a, i) => { const q = P(a); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); }); g.closePath(); };
+    g.strokeStyle = C.line; g.lineWidth = 1.5; g.beginPath(); g.arc(320, 240, 200, 0, TAU); g.stroke();
+    g.lineWidth = 1; g.globalAlpha = S.tr.length < 12 ? .7 : .25;
+    for (const r of S.tr) { g.strokeStyle = r.hit ? C.hit : C.miss; tri(r); g.stroke(); }
+    g.globalAlpha = 1;
+    if (cur) {
+      const col = p >= 1 ? (cur.hit ? C.hit : C.miss) : C.ink, k = Math.min(3, Math.ceil(p * 3.2));
+      if (p >= .95) { tri(cur); g.fillStyle = col; g.globalAlpha = .25; g.fill(); g.globalAlpha = 1; g.strokeStyle = col; g.lineWidth = 2.5; g.stroke(); }
+      g.fillStyle = col; for (let i = 0; i < k; i++) { const q = P(cur.a[i]); g.beginPath(); g.arc(q[0], q[1], 6, 0, TAU); g.fill(); }
+    }
+    g.fillStyle = C.ink; g.beginPath(); g.arc(320, 240, 4, 0, TAU); g.fill();
+  }
+},
+{
+  name: 'Случайная хорда', slowMs: 1100, exact: 1 / 3,
+  question: 'На окружности выбирают две случайные точки и соединяют их хордой. С какой вероятностью хорда окажется длиннее стороны вписанного правильного треугольника?',
+  why: 'Закрепим первую точку в вершине треугольника. Хорда длиннее стороны, только если вторая точка попала на дальнюю дугу между двумя другими вершинами, а это треть окружности.',
+  fact: 'Это парадокс Бертрана (1889). Если выбирать хорду иначе, например по случайной точке на радиусе или по случайной середине внутри круга, получится 1/2 или 1/4. Все три ответа верны: вопрос не имеет смысла, пока не сказано, как именно выбирают «случайную» хорду.',
+  srcName: 'Gardner M. Mathematical Games. Scientific American, октябрь 1959', srcUrl: 'https://www.scientificamerican.com/article/mathematical-games-1959-10/',
+  init(S) { S.ch = []; },
+  trial() { const a = Math.random() * TAU, b = Math.random() * TAU; let d = Math.abs(a - b); if (d > Math.PI) d = TAU - d; return {a, b, hit: d > TAU / 3}; },
+  commit(S, r) { S.ch.push(r); if (S.ch.length > 350) S.ch.shift(); },
+  draw(g, S, cur, p) {
+    const P = a => onCircle(a, 200, 320, 240);
+    g.strokeStyle = C.line; g.lineWidth = 1.5; g.beginPath(); g.arc(320, 240, 200, 0, TAU); g.stroke();
+    const few = S.ch.length < 40; g.lineWidth = few ? 2 : 1;
+    for (let pass = 0; pass < 2; pass++) {
+      g.strokeStyle = pass ? C.hit : C.miss; g.globalAlpha = few ? .85 : .3; g.beginPath();
+      for (const r of S.ch) if (+r.hit === pass) { const u = P(r.a), v = P(r.b); g.moveTo(u[0], u[1]); g.lineTo(v[0], v[1]); }
+      g.stroke();
+    }
+    g.globalAlpha = 1; g.setLineDash([5, 6]); g.strokeStyle = C.ink; g.lineWidth = 1.5; g.beginPath();
+    [0, 1, 2].forEach(i => { const q = P(-Math.PI / 2 + i * TAU / 3); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); }); g.closePath(); g.stroke(); g.setLineDash([]);
+    if (cur) {
+      const u = P(cur.a), v = P(cur.b), col = p >= 1 ? (cur.hit ? C.hit : C.miss) : C.ink;
+      g.strokeStyle = col; g.lineWidth = 3.5; g.beginPath(); g.moveTo(u[0], u[1]); g.lineTo(lerp(u[0], v[0], p), lerp(u[1], v[1], p)); g.stroke();
+      g.fillStyle = col; g.beginPath(); g.arc(u[0], u[1], 5, 0, TAU); g.fill();
+    }
+  }
+},
+{
+  name: 'Разорение игрока', slowMs: 2000, exact: .3,
+  question: 'У игрока 3 монеты. Каждый раунд он с равными шансами выигрывает или проигрывает одну. Игра идёт, пока у него не окажется 10 монет или ни одной. С какой вероятностью он дойдёт до 10?',
+  why: 'В честной игре шанс дойти до цели равен доле уже пройденного пути: 3 монеты из 10, то есть 30%. Сколько бы ни длилась игра, это соотношение не меняется.',
+  fact: 'Задачу о разорении игрока Паскаль предложил Ферма в 1656 году. Через год Гюйгенс включил её в первый печатный трактат по теории вероятностей, «О расчётах в азартной игре».',
+  srcName: 'Edwards A.W.F. Pascal’s Problem: The “Gambler’s Ruin”. International Statistical Review, 1983',
+  init(S) { S.paths = []; },
+  trial() { const path = [3]; let c = 3; while (c > 0 && c < 10) { c += Math.random() < .5 ? 1 : -1; path.push(c); } return {path, hit: c === 10}; },
+  commit(S, r) { S.paths.push(r); if (S.paths.length > 45) S.paths.shift(); },
+  draw(g, S, cur, p) {
+    const X0 = 96, X1 = 600, Y = c => 420 - c * 36;
+    const line = (r, k) => { const n = r.path.length - 1; g.beginPath(); for (let i = 0; i <= k; i++) { const x = X0 + i / n * (X1 - X0); i ? g.lineTo(x, Y(r.path[i])) : g.moveTo(x, Y(r.path[i])); } g.stroke(); };
+    g.lineWidth = 1; g.strokeStyle = C.faint; g.beginPath(); for (let c = 1; c < 10; c++) { g.moveTo(X0, Y(c) + .5); g.lineTo(X1, Y(c) + .5); } g.stroke();
+    g.strokeStyle = C.line; g.lineWidth = 1.5; g.beginPath(); g.moveTo(X0, Y(10)); g.lineTo(X1, Y(10)); g.moveTo(X0, Y(0)); g.lineTo(X1, Y(0)); g.stroke();
+    g.font = '500 11px "JetBrains Mono", monospace'; g.textBaseline = 'middle'; g.textAlign = 'right'; g.fillStyle = C.dim;
+    g.fillText('ЦЕЛЬ 10', 84, Y(10)); g.fillText('СТАРТ 3', 84, Y(3)); g.fillText('НОЛЬ', 84, Y(0));
+    g.lineWidth = 1.2; g.lineJoin = 'round'; g.globalAlpha = S.paths.length < 8 ? .7 : .3;
+    for (const r of S.paths) { g.strokeStyle = r.hit ? C.hit : C.miss; line(r, r.path.length - 1); }
+    g.globalAlpha = 1;
+    if (cur) {
+      const n = cur.path.length - 1, k = Math.min(n, Math.ceil(p * n)), col = p >= 1 ? (cur.hit ? C.hit : C.miss) : C.ink;
+      g.strokeStyle = col; g.lineWidth = 2.8; line(cur, k);
+      g.fillStyle = col; g.beginPath(); g.arc(X0 + k / n * (X1 - X0), Y(cur.path[k]), 5, 0, TAU); g.fill();
+    }
+  }
+},
+{
+  name: 'Тайный Санта', slowMs: 1700, exact: 1334961 / 3628800, init: tallyInit, commit: tallyCommit,
+  question: '10 друзей играют в Тайного Санту: каждый тянет из шапки бумажку с именем. С какой вероятностью никто не вытянет сам себя?',
+  why: 'Из 3 628 800 способов раздать бумажки ровно 1 334 961 обходятся без совпадений. Доля почти не зависит от числа игроков и быстро сходится к 1/e ≈ 36,8%.',
+  fact: 'Это «задача о встречах». Её в 1708 году разобрал Пьер де Монмор на примере карточной игры «Тринадцать»: игрок выкладывает карты и считает вслух, проигрывая, если номер совпал с картой.',
+  srcName: 'Montmort P. R. Essay d’analyse sur les jeux de hazard, 1708',
+  trial() { const perm = shuffle([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), fix = perm.map((v, i) => v === i), nfix = fix.filter(Boolean).length; return {perm, fix, nfix, hit: nfix === 0}; },
+  draw(g, S, cur, p) {
+    const r = cur || S.last, done = !cur || p >= 1, k = r ? (done ? 10 : Math.ceil(p * 10)) : 0, P = i => onCircle(i / 10 * TAU - Math.PI / 2, 98, 320, 130);
+    if (r) {
+      g.strokeStyle = C.line; g.lineWidth = 1.4; g.beginPath();
+      for (let i = 0; i < k; i++) if (!r.fix[i]) {
+        const u = P(i), v = P(r.perm[i]), a = Math.atan2(v[1] - u[1], v[0] - u[0]), tx = v[0] - 19 * Math.cos(a), ty = v[1] - 19 * Math.sin(a);
+        g.moveTo(u[0], u[1]); g.lineTo(tx, ty);
+        g.moveTo(tx - 8 * Math.cos(a - .45), ty - 8 * Math.sin(a - .45)); g.lineTo(tx, ty); g.lineTo(tx - 8 * Math.cos(a + .45), ty - 8 * Math.sin(a + .45));
+      }
+      g.stroke();
+    }
+    for (let i = 0; i < 10; i++) {
+      const q = P(i), self = r && i < k && r.fix[i];
+      g.save(); g.translate(q[0], q[1] - 2); personIcon(g, 30, self ? C.miss : C.ink); g.restore();
+      if (self) { g.strokeStyle = C.miss; g.lineWidth = 2.5; g.beginPath(); g.arc(q[0], q[1], 17, 0, TAU); g.stroke(); }
+    }
+    if (r && done) statusLine(g, r.hit ? 'Никто не вытянул сам себя' : 'Сами себя вытянули: ' + r.nfix, r.hit ? C.hit : C.miss);
+    drawTally(g, S, 'ОДИН КВАДРАТ — ОДИН РОЗЫГРЫШ');
+  }
+},
+{
+  name: '100 заключённых', slowMs: 1900, exact: (() => { let s = 0; for (let k = 51; k <= 100; k++) s += 1 / k; return 1 - s; })(), init: tallyInit, commit: tallyCommit,
+  question: '100 заключённых и 100 коробок, в которых случайно разложены их номера. Каждый может открыть 50 коробок и должен найти свой номер. Все действуют одинаково: открывают коробку со своим номером, потом ту, чей номер нашли внутри, и так далее. С какой вероятностью свой номер найдут все?',
+  why: 'Коробки образуют замкнутые цепочки. Каждый идёт по своей цепочке и находит номер, если она не длиннее 50. Цепочка длиннее 50 коробок встречается в 68,8% случайных раскладок. Если открывать коробки наугад, шанс общего успеха был бы меньше одного на 10³⁰.',
+  fact: 'Задачу придумали в 2003 году датские учёные Анна Галь и Петер Бро Мильтерсен в статье о структурах данных. Стратегию с цепочками предложил их коллега Свен Скюм, и позже было доказано, что лучшей не существует.',
+  srcName: 'Gál A., Miltersen P. B. The cell probe complexity of succinct data structures. ICALP, 2003',
+  trial() {
+    const perm = shuffle(Array.from({length: 100}, (_, i) => i)), seen = new Uint8Array(100); let best = [];
+    for (let i = 0; i < 100; i++) if (!seen[i]) { const c = []; let j = i; while (!seen[j]) { seen[j] = 1; c.push(j); j = perm[j]; } if (c.length > best.length) best = c; }
+    return {best, hit: best.length <= 50};
+  },
+  draw(g, S, cur, p) {
+    const r = cur || S.last, done = !cur || p >= 1, cell = i => g.fillRect(210 + (i % 10) * 22, 20 + Math.floor(i / 10) * 22, 19, 19);
+    g.fillStyle = TINT; for (let i = 0; i < 100; i++) cell(i);
+    if (r) {
+      const k = done ? r.best.length : Math.ceil(p * r.best.length);
+      g.fillStyle = done ? (r.hit ? C.hit : C.miss) : C.ink; for (let i = 0; i < k; i++) cell(r.best[i]);
+      if (done) statusLine(g, 'Самая длинная цепочка: ' + r.best.length + (r.hit ? ' — все находят свой номер' : ' — половина не успевает'), r.hit ? C.hit : C.miss);
+    }
+    drawTally(g, S, 'ОДИН КВАДРАТ — ОДНА ПОПЫТКА ВСЕЙ ТЮРЬМЫ');
+  }
+},
+{
+  name: 'Бутерброд', kind: 'm', slowMs: 1500, exact: .62,
+  question: 'Бутерброд соскальзывает с края стола. С какой вероятностью он упадёт маслом вниз?',
+  why: 'Это измеренная частота, а не расчёт: симуляция просто разыгрывает 62%. Дело не в масле, а в высоте стола. Соскальзывая с края, бутерброд начинает вращаться и до пола успевает сделать примерно пол-оборота.',
+  fact: 'В 2001 году физик Роберт Мэттьюз устроил опыт в британских школах: больше тысячи школьников почти 10 000 раз столкнули тост с тарелки. Маслом вниз он упал в 62% случаев. С высоты больше 2,4 метра результат менялся: тост успевал довернуться и падал маслом вниз только в 47% случаев.',
+  srcName: 'BBC Science Focus, Роберт Мэттьюз о своём эксперименте', srcUrl: 'https://www.sciencefocus.com/science/why-does-toast-often-land-butter-side-down',
+  init(S) { S.land = []; },
+  trial() { return {x: 250 + Math.random() * 330, hit: Math.random() < .62}; },
+  commit(S, r) { S.land.push(r); if (S.land.length > 48) S.land.shift(); },
+  draw(g, S, cur, p) {
+    const toast = (x, y, a, alpha) => { g.save(); g.translate(x, y); g.rotate(a); g.globalAlpha = alpha; rrect(g, -24, -5, 48, 11, 4); g.fillStyle = '#e9c98f'; g.fill(); g.strokeStyle = '#a8713a'; g.lineWidth = 2; g.stroke(); rrect(g, -21, -10, 42, 6, 3); g.fillStyle = '#ffe36e'; g.fill(); g.restore(); };
+    g.fillStyle = C.line; g.fillRect(40, 150, 170, 8); g.fillRect(170, 158, 8, 272); g.fillRect(40, 430, 580, 2);
+    for (const r of S.land) toast(r.x, 422, r.hit ? Math.PI : 0, .5);
+    if (cur) {
+      const t = Math.max(0, (p - .2) / .8), slide = Math.min(1, p / .2);
+      const x = t > 0 ? lerp(222, cur.x, t) : lerp(150, 222, slide), y = lerp(142, 422, t * t), a = t * (cur.hit ? Math.PI : TAU);
+      toast(x, y, a, 1);
+      if (p >= 1) statusLine(g, cur.hit ? 'Маслом вниз' : 'Маслом вверх', cur.hit ? C.hit : C.miss, 80);
+    } else if (!S.land.length) { toast(150, 142, 0, 1); }
+  }
+},
+seq({
+  name: 'Серия в монете', exact: 476 / 1024, n: 10, unit: 'ОДИН КВАДРАТ — ОДНА СЕРИЯ ИЗ 10 БРОСКОВ', hint: 'Монета: О — орёл, Р — решка. Всего 10 бросков',
+  question: 'Монету бросают 10 раз. С какой вероятностью одна и та же сторона выпадет хотя бы 4 раза подряд?',
+  why: 'Из 1 024 возможных последовательностей серию из четырёх и более одинаковых сторон содержат 476. Длинные серии в случайности встречаются чаще, чем подсказывает интуиция.',
+  fact: 'В 1985 году психологи Гилович, Валлоне и Тверски изучили веру баскетболистов в «горячую руку». Они показали, что люди ждут от случайности частого чередования и поэтому принимают обычные серии за закономерность.',
+  srcName: 'Gilovich, Vallone, Tversky. The hot hand in basketball. Cognitive Psychology, 1985', srcUrl: 'https://doi.org/10.1016/0010-0285(85)90010-6',
+  trial() {
+    const f = [], hl = new Array(10).fill(0); for (let i = 0; i < 10; i++) f.push(rnd(2)); let hit = false;
+    for (let i = 0; i < 10;) { let j = i; while (j < 10 && f[j] === f[i]) j++; if (j - i >= 4) { hit = true; for (let q = i; q < j; q++) hl[q] = 1; } i = j; }
+    return {f, hl, hit};
+  },
+  items: r => r.f.map((v, i) => ({kind: 'coin', v, hl: r.hl[i]})),
+  status: r => r.hit ? 'Есть серия из четырёх и больше' : 'Длинной серии нет'
+}),
+seq({
+  name: 'Все грани кубика', exact: (() => { let f = 0; [1, 6, 15, 20, 15, 6, 1].forEach((c, k) => { f += (k % 2 ? -1 : 1) * c * Math.pow((6 - k) / 6, 10); }); return f; })(),
+  n: 10, unit: 'ОДИН КВАДРАТ — ОДНА СЕРИЯ ИЗ 10 БРОСКОВ', hint: 'Игральный кубик: 6 граней, от 1 до 6 очков. Всего 10 бросков',
+  question: 'Кубик бросают 10 раз. С какой вероятностью за это время выпадут все шесть граней?',
+  why: 'Первые новые грани появляются быстро, а последнюю приходится ждать долго. Чтобы увидеть все шесть, в среднем нужно 14,7 броска, поэтому десяти обычно не хватает.',
+  fact: 'Это «задача коллекционера». В 2018 году математик Пол Харпер из Кардиффского университета применил её к альбому наклеек Panini к чемпионату мира: чтобы в одиночку собрать все 682 наклейки, в среднем нужно купить 4 832 штуки. Половина пути пройдена, когда не хватает всего 19.',
+  srcName: 'Cardiff University, «World Cup stickers», 2018', srcUrl: 'https://www.cardiff.ac.uk/news/view/1136091-world-cup-stickers',
+  trial() { const d = dice(10), miss = [1, 2, 3, 4, 5, 6].filter(v => !d.includes(v)); return {d, miss, hit: !miss.length}; },
+  items: r => r.d.map(v => ({kind: 'die', v})),
+  status: r => r.hit ? 'Выпали все шесть граней' : 'Не выпало: ' + r.miss.join(', ')
+}),
+seq({
+  name: 'Пари де Мере', exact: 1 - Math.pow(5 / 6, 4), n: 4, w: 72, h: 72, gap: 16, unit: 'ОДИН КВАДРАТ — ЧЕТЫРЕ БРОСКА', hint: 'Игральный кубик: 6 граней. Четыре броска, ждём шестёрку',
+  question: 'Кубик бросают 4 раза. С какой вероятностью хотя бы раз выпадет шестёрка?',
+  why: 'Проще посчитать обратное: шестёрки не будет ни разу с вероятностью (5/6)⁴ ≈ 48,2%. Значит, хотя бы одна выпадет в 51,8% случаев. Перевес небольшой, но на длинной дистанции он приносит деньги.',
+  fact: 'На этом пари зарабатывал французский игрок шевалье де Мере. В 1654 году он спросил Блеза Паскаля, почему похожая ставка на две шестёрки стала убыточной. Из переписки Паскаля и Ферма по этому поводу выросла теория вероятностей.',
+  srcName: 'Переписка Паскаля и Ферма, 1654',
+  trial() { const d = dice(4); return {d, hit: d.includes(6)}; },
+  items: r => r.d.map(v => ({kind: 'die', v, hl: v === 6})),
+  status: r => r.hit ? 'Шестёрка выпала' : 'Шестёрки нет'
+}),
+seq({
+  name: 'Две шестёрки', slowMs: 1700, exact: 1 - Math.pow(35 / 36, 24), n: 24, per: 8, w: 60, h: 30, gap: 10, unit: 'ОДИН КВАДРАТ — 24 БРОСКА ПАРЫ', hint: 'Пара кубиков: 36 сочетаний, две шестёрки только в одном. 24 броска',
+  question: 'Пару кубиков бросают 24 раза. С какой вероятностью хотя бы раз выпадут две шестёрки сразу?',
+  why: 'Две шестёрки выпадают в одном броске из 36. За 24 броска их не будет с вероятностью (35/36)²⁴ ≈ 50,9%, так что ставка чуть-чуть проигрышная. Для перевеса нужно 25 бросков.',
+  fact: 'Шевалье де Мере рассуждал так: шестёрка выпадает в 6 раз чаще, чем две шестёрки, поэтому вместо 4 бросков достаточно 24. Игра показала, что это неверно, и в 1654 году он обратился к Паскалю. Разница между 49,1% и 50% слишком мала, чтобы заметить её без тысяч партий.',
+  srcName: 'Переписка Паскаля и Ферма, 1654',
+  trial() { const a = dice(24), b = dice(24); return {a, b, hit: a.some((v, i) => v === 6 && b[i] === 6)}; },
+  items: r => r.a.map((v, i) => ({kind: 'dice2', a: v, b: r.b[i], hl: v === 6 && r.b[i] === 6})),
+  status: r => r.hit ? 'Две шестёрки выпали' : 'Двух шестёрок не было'
+}),
+seq({
+  name: 'Загадка Галилея', exact: 27 / 216, n: 3, w: 76, h: 76, gap: 18, unit: 'ОДИН КВАДРАТ — ОДИН БРОСОК ТРЁХ КУБИКОВ', hint: 'Три кубика: сумма от 3 до 18, всего 216 сочетаний',
+  question: 'Бросают три кубика. С какой вероятностью сумма очков будет равна ровно 10?',
+  why: 'Три кубика дают 216 равновероятных исходов, и сумму 10 дают 27 из них. Это самая частая сумма наравне с 11, но даже она выпадает лишь в одном броске из восьми.',
+  fact: 'Около 1620 года игроки спросили Галилея, почему сумма 10 выпадает чаще, чем 9, хотя обе раскладываются на три слагаемых шестью способами. Галилей показал, что считать нужно с учётом порядка кубиков: тогда способов 27 против 25.',
+  srcName: 'Galilei G. Sopra le scoperte dei dadi, ок. 1620',
+  trial() { const d = dice(3), s = d[0] + d[1] + d[2]; return {d, s, hit: s === 10}; },
+  items: r => r.d.map(v => ({kind: 'die', v, hl: r.hit})),
+  status: r => 'Сумма ' + r.s
+}),
+seq({
+  name: 'Плейлист', exact: 1 - 39480 / 113400, n: 10, unit: 'ОДИН КВАДРАТ — ОДНО ПЕРЕМЕШИВАНИЕ', hint: '10 песен: пять исполнителей, по две песни',
+  question: 'В плейлисте 10 песен: пять исполнителей, по две песни у каждого. Плейлист перемешивают случайно. С какой вероятностью где-то две песни одного исполнителя окажутся подряд?',
+  why: 'Из 113 400 различимых порядков только 39 480 обходятся без двух соседних песен одного исполнителя. В честной случайности такие пары возникают почти в двух перемешиваниях из трёх.',
+  fact: 'Пользователи Spotify годами жаловались, что случайный порядок «не случайный»: слишком часто подряд играл один исполнитель. В 2014 году компания рассказала, что заменила честное перемешивание алгоритмом, который специально разносит песни одного исполнителя.',
+  srcName: 'Spotify Engineering, «How to shuffle songs?», 2014',
+  trial() { const a = shuffle([0, 0, 1, 1, 2, 2, 3, 3, 4, 4]), hl = a.map((v, i) => +(v === a[i - 1] || v === a[i + 1])); return {a, hl, hit: hl.includes(1)}; },
+  items: r => r.a.map((v, i) => ({t: 'АБВГД'[v], col: ARTIST[v], hl: r.hl[i]})),
+  status: r => r.hit ? 'Один исполнитель дважды подряд' : 'Повторов подряд нет'
+}),
+seq({
+  name: 'Игра Пенни', slowMs: 1500, exact: .75, n: 8, unit: 'ОДИН КВАДРАТ — ОДНА ПАРТИЯ', hint: 'Монета: О — орёл, Р — решка. Показаны последние броски',
+  question: 'Монету бросают, пока не выпадет одна из двух комбинаций: «орёл, орёл, решка» или «решка, орёл, орёл». С какой вероятностью первой появится вторая, «решка, орёл, орёл»?',
+  why: '«Орёл, орёл, решка» побеждает, только если монета начала с двух орлов подряд, а это четверть случаев. Как только выпала хотя бы одна решка, перед любыми двумя орлами уже стоит решка, и вторая комбинация успевает раньше.',
+  fact: 'Игру придумал Уолтер Пенни в 1969 году. Её секрет в том, что лучшей комбинации нет: какую бы тройку ни назвал первый игрок, второй может подобрать свою, которая будет выигрывать чаще.',
+  srcName: 'Penney W. Problem 95: Penney-Ante. Journal of Recreational Mathematics, 1969',
+  trial() { const f = []; for (;;) { f.push(rnd(2)); const n = f.length; if (n >= 3) { const a = f[n - 3], b = f[n - 2], c = f[n - 1]; if (a && b && !c) return {f, hit: false}; if (!a && b && c) return {f, hit: true}; } } },
+  items: r => { const s = r.f.slice(-12); return s.map((v, i) => ({kind: 'coin', v, hl: i >= s.length - 3 ? (r.hit ? 1 : 2) : 0})); },
+  status: r => r.hit ? 'Первой выпала «решка, орёл, орёл»' : 'Первой выпала «орёл, орёл, решка»'
+}),
+seq({
+  name: 'Двое детей', slowMs: 1000, exact: 1 / 3, n: 2, w: 96, h: 104, gap: 20, unit: 'ОДИН КВАДРАТ — ОДНА СЕМЬЯ, ГДЕ ЕСТЬ МАЛЬЧИК', hint: 'Семья с двумя детьми, в которой есть хотя бы один мальчик',
+  question: 'Берём случайные семьи с двумя детьми и оставляем только те, где есть хотя бы один мальчик. С какой вероятностью в такой семье оба ребёнка мальчики?',
+  why: 'Равновероятных вариантов три: мальчик и мальчик, мальчик и девочка, девочка и мальчик. Подходит один из трёх. В модели мальчики и девочки рождаются с равными шансами.',
+  fact: 'Задачу популяризировал Мартин Гарднер в журнале Scientific American в 1959 году. Позже он признал, что формулировка двусмысленна: если о мальчике узнали, случайно встретив одного из детей, ответ будет 1/2. Поэтому здесь способ отбора семей указан явно.',
+  srcName: 'Gardner M. Mathematical Games. Scientific American, 1959',
+  trial() { for (;;) { const a = rnd(2), b = rnd(2); if (a || b) return {k: [a, b], hit: !!(a && b)}; } },
+  items: r => r.k.map(v => ({kind: 'kid', boy: !!v, hl: r.hit ? 1 : 0})),
+  status: r => r.hit ? 'Оба мальчики' : 'Мальчик и девочка'
+}),
+seq({
+  name: 'Серия в рулетке', slowMs: 1900, exact: rouletteExact(100, 8), n: 100, per: 25, w: 18, h: 18, gap: 4, unit: 'ОДИН КВАДРАТ — ОДИН ВЕЧЕР ИЗ 100 ЗАПУСКОВ', hint: 'Каждый кружок — один запуск: красное, чёрное или зелёное зеро',
+  question: 'Европейская рулетка: 18 красных секторов, 18 чёрных и зеро. За вечер шарик запускают 100 раз. С какой вероятностью хотя бы раз один цвет выпадет 8 раз подряд?',
+  why: 'Серия из восьми кажется чудом, но за 100 запусков у неё больше 90 возможных мест начала. Точный расчёт перебором всех состояний даёт 26,7%.',
+  fact: '18 августа 1913 года в казино Монте-Карло чёрное выпало 26 раз подряд. Игроки проиграли миллионы франков, ставя на красное: им казалось, что после такой серии оно «обязано» выпасть. Эту ошибку с тех пор называют ошибкой игрока.',
+  srcName: 'Случай в казино Монте-Карло, 18 августа 1913 года',
+  trial() {
+    const v = [], hl = new Array(100).fill(0); for (let i = 0; i < 100; i++) { const x = rnd(37); v.push(x === 0 ? 0 : x <= 18 ? 1 : 2); } let hit = false;
+    for (let i = 0; i < 100;) { let j = i; while (j < 100 && v[j] === v[i]) j++; if (v[i] && j - i >= 8) { hit = true; for (let q = i; q < j; q++) hl[q] = 1; } i = j; }
+    return {v, hl, hit};
+  },
+  items: r => r.v.map((x, i) => ({kind: 'chip', col: ROUL[x], hl: r.hl[i]})),
+  status: r => r.hit ? 'Есть серия из восьми и больше' : 'Серии из восьми нет'
+}),
+seq({
+  name: 'Маммограмма', slowMs: 1200, staged: true, exact: .009 / (.009 + .99 * .09), n: 2, w: 116, h: 100, gap: 26, font: '700 17px', unit: 'ОДИН КВАДРАТ — ОДНА ЖЕНЩИНА С ПОЛОЖИТЕЛЬНЫМ ТЕСТОМ', hint: 'Смотрим только на женщин с положительным результатом теста',
+  question: 'Маммографию проходят женщины, среди которых больна 1%. Тест находит болезнь в 90% случаев, а у здоровых даёт ложную тревогу в 9% случаев. У женщины положительный результат. С какой вероятностью она действительно больна?',
+  why: 'Из 1 000 женщин больны 10, и тест найдёт 9 из них. Но ещё у 89 здоровых он сработает ложно. Положительных результатов 98, и только 9 из них настоящие.',
+  fact: 'Психолог Герд Гигеренцер задал этот вопрос 160 гинекологам на курсах повышения квалификации. 60% ответили, что вероятность составляет 80–90%, и только 21% выбрал верный ответ. После часового объяснения на языке «из 1 000 женщин» правильно отвечали 87%.',
+  srcName: 'Gigerenzer G. What are natural frequencies? BMJ, 2011', srcUrl: 'https://doi.org/10.1136/bmj.d6386',
+  trial() { for (;;) { const sick = Math.random() < .01; if (Math.random() < (sick ? .9 : .09)) return {hit: sick}; } },
+  items: (r, p) => [{t: 'ТЕСТ +'}, {kind: 'person', col: p < .55 ? C.ink : r.hit ? C.hit : C.miss, cap: p < .55 ? 'больна или нет?' : r.hit ? 'больна' : 'здорова', hl: r.hit ? 1 : 2}],
+  status: r => r.hit ? 'Тест не ошибся' : 'Ложная тревога'
+}),
+seq({
+  name: 'Первая цифра', slowMs: 1100, staged: true, exact: Math.log10(2), n: 1, w: 220, h: 64, font: '700 26px', unit: 'ОДИН КВАДРАТ — ОДНО ЧИСЛО', hint: 'Случайное число от 10 до 1 000 000',
+  question: 'Берём случайную величину из жизни: население города, длину реки, сумму в счёте. Такие числа разбросаны на много порядков. С какой вероятностью число начинается с единицы?',
+  why: 'В модели число равномерно разбросано по порядкам величины, от десятков до сотен тысяч. На такой шкале отрезок от 1 до 2 занимает log₁₀2 ≈ 30,1%, а отрезок от 9 до 10 меньше 5%.',
+  fact: 'Это закон Бенфорда. В 1881 году астроном Саймон Ньюком заметил, что первые страницы таблиц логарифмов затёрты сильнее последних. В 1938 году физик Фрэнк Бенфорд проверил закон на 20 229 числах из 20 источников. Сегодня аудиторы ищут с его помощью поддельную отчётность.',
+  srcName: 'Benford F. The Law of Anomalous Numbers. Proceedings of the American Philosophical Society, 1938',
+  trial() { const x = Math.floor(Math.pow(10, 1 + Math.random() * 5)), d = +String(x)[0]; return {x, d, hit: d === 1}; },
+  scene(g, r, p, done) {
+    g.font = '700 56px' + MONO; g.textBaseline = 'middle'; g.textAlign = 'left';
+    const rolling = !r || (!done && p < .5), txt = String(rolling ? Math.floor(Math.pow(10, 1 + Math.random() * 5)) : r.x);
+    const cw = g.measureText('0').width, W = cw * txt.length, x0 = 320 - W / 2;
+    if (!rolling) { rrect(g, x0 - 8, 140 - 44, cw + 16, 88, 8); g.fillStyle = r.hit ? C.hit : C.miss; g.fill(); }
+    for (let i = 0; i < txt.length; i++) { g.fillStyle = rolling ? C.dim : i ? C.ink : INKD; g.fillText(txt[i], x0 + i * cw, 143); }
+  },
+  status: r => 'Первая цифра ' + r.d
+}),
+seq({
+  name: 'Честная монета', kind: 'm', slowMs: 1100, staged: true, exact: .508, n: 2, w: 96, h: 96, gap: 56, unit: 'ОДИН КВАДРАТ — ОДИН БРОСОК', hint: 'Слева монета перед броском, справа после него',
+  question: 'Обычную монету подбрасывают большим пальцем и ловят рукой. С какой вероятностью она упадёт той же стороной, которой лежала вверх перед броском?',
+  why: 'Это измеренная частота, а не расчёт: симуляция просто разыгрывает 50,8%. Монета в полёте слегка покачивается, как волчок, и из-за этого чуть дольше остаётся исходной стороной вверх.',
+  fact: 'Смещение предсказал в 2007 году математик Перси Диаконис. В 2023 году группа из 48 человек под руководством Франтишека Бартоша проверила прогноз: 350 757 бросков монет 46 разных валют дали 50,8% совпадений с исходной стороной.',
+  srcName: 'Bartoš F. et al. Fair coins tend to land on the same side they started, 2023', srcUrl: 'https://arxiv.org/abs/2310.04153',
+  trial() { const a = rnd(2), same = Math.random() < .508; return {a, b: same ? a : 1 - a, hit: same}; },
+  items: (r, p) => [{kind: 'coin', v: r.a, lp: 1, cap: 'было'}, {kind: 'coin', v: r.b, lp: p / .75, cap: 'стало', hl: r.hit ? 1 : 2}],
+  status: r => r.hit ? 'Та же сторона' : 'Другая сторона'
+}),
+seq({
+  name: 'Монти Холл', slowMs: 2100, staged: true, exact: 2 / 3, n: 3, w: 96, h: 136, gap: 40, unit: 'ОДИН КВАДРАТ — ОДНА ИГРА СО СМЕНОЙ ДВЕРИ', hint: 'Три двери: за одной автомобиль, за двумя козы',
+  question: 'За одной из трёх дверей автомобиль, за двумя другими козы. Игрок выбирает дверь. Ведущий, который знает, где приз, открывает одну из оставшихся дверей с козой и предлагает сменить выбор. Игрок всегда меняет. С какой вероятностью он выиграет автомобиль?',
+  why: 'Первый выбор верен в одном случае из трёх. В остальных двух ведущий вынужден открыть единственную оставшуюся козу, и смена двери приводит прямо к автомобилю.',
+  fact: 'В сентябре 1990 года Мэрилин вос Савант дала этот ответ в колонке журнала Parade. Ей пришло около 10 000 писем, почти тысяча из них от людей с докторской степенью, и большинство авторов уверяли, что она ошиблась. В 1991 году спор разбирала первая полоса «Нью-Йорк таймс».',
+  srcName: 'Tierney J. Behind Monty Hall’s Doors: Puzzle, Debate and Answer? The New York Times, 21.07.1991', srcUrl: 'https://www2.math.upenn.edu/~kazdan/210/notes-misc/Monty_Hall.html',
+  trial() { const car = rnd(3), pick = rnd(3), opts = [0, 1, 2].filter(i => i !== pick && i !== car), open = opts[rnd(opts.length)], sw = 3 - pick - open; return {car, pick, open, sw, hit: sw === car}; },
+  items: (r, p) => { const st = p < .34 ? 0 : p < .67 ? 1 : 2; return [0, 1, 2].map(i => ({kind: 'door', num: i + 1, state: st === 2 || (st === 1 && i === r.open) ? 1 : 0, what: i === r.car ? 'car' : 'goat', tag: st === 2 && i === r.sw ? 'СМЕНА' : st < 2 && i === r.pick ? 'ВЫБОР' : '', hl: i === r.sw ? (r.hit ? 1 : 2) : 0})); },
+  status: r => r.hit ? 'Сменил дверь и выиграл' : 'Сменил дверь и проиграл'
+}),
+seq({
+  name: 'Орёл', slowMs: 900, staged: true, exact: .5, n: 1, w: 120, h: 120, unit: 'ОДИН КВАДРАТ — ОДИН БРОСОК', hint: 'Монета: две стороны, орёл (О) и решка (Р)',
+  question: 'Монету подбрасывают один раз. С какой вероятностью выпадет орёл?',
+  why: 'У монеты две равноправные стороны, поэтому каждая выпадает в половине случаев. Посмотрите, как долго частота колеблется, прежде чем успокоиться у 50%.',
+  fact: 'Математик Джон Керрич во время Второй мировой войны был интернирован в Дании и от скуки подбросил монету 10 000 раз. Орёл выпал 5 067 раз. Свои опыты он описал в книге, по которой потом учили теорию вероятностей.',
+  srcName: 'Kerrich J. E. An Experimental Introduction to the Theory of Probability, 1946',
+  trial() { return {hit: rnd(2) === 1}; },
+  items: (r, p) => [{kind: 'coin', v: +r.hit, lp: p / .75, hl: r.hit ? 1 : 2}],
+  status: r => r.hit ? 'Орёл' : 'Решка'
+}),
+seq({
+  name: 'Пять или шесть', slowMs: 900, staged: true, exact: 1 / 3, n: 1, w: 104, h: 104, unit: 'ОДИН КВАДРАТ — ОДИН БРОСОК', hint: 'Игральный кубик: 6 граней, от 1 до 6 очков',
+  question: 'Кубик бросают один раз. С какой вероятностью выпадет 5 или 6?',
+  why: 'У кубика шесть равноправных граней, подходят две из них. Две из шести — это треть.',
+  fact: 'У стандартного игрального кубика сумма очков на противоположных гранях всегда равна 7: напротив единицы шестёрка, напротив двойки пятёрка, напротив тройки четвёрка.',
+  srcName: 'Стандартная разметка игрального кубика',
+  trial() { const d = 1 + rnd(6); return {d, hit: d >= 5}; },
+  items: (r, p) => [{kind: 'die', v: r.d, lp: p / .75, hl: r.hit ? 1 : 2}],
+  status: r => r.hit ? 'Выпало ' + r.d + ' — подходит' : 'Выпало ' + r.d
+}),
+seq({
+  name: 'Хотя бы один орёл', slowMs: 1000, exact: .75, n: 2, w: 84, h: 84, gap: 24, unit: 'ОДИН КВАДРАТ — ДВА БРОСКА', hint: 'Монета: О — орёл, Р — решка. Два броска',
+  question: 'Монету подбрасывают два раза. С какой вероятностью орёл выпадет хотя бы один раз?',
+  why: 'Равновероятных исходов четыре: орёл-орёл, орёл-решка, решка-орёл, решка-решка. Орла нет только в последнем.',
+  fact: 'В 1754 году на этой задаче ошибся знаменитый математик Жан Д’Аламбер. В «Энциклопедии» он насчитал три исхода (орёл сразу, решка потом орёл, две решки) и получил 2/3, не заметив, что эти исходы не равновероятны.',
+  srcName: 'D’Alembert J. Croix ou pile. Encyclopédie, 1754',
+  trial() { const f = [rnd(2), rnd(2)]; return {f, hit: !!(f[0] || f[1])}; },
+  items: r => r.f.map(v => ({kind: 'coin', v, hl: v ? 1 : 0})),
+  status: r => r.hit ? 'Орёл есть' : 'Две решки'
+}),
+seq({
+  name: 'Черва', slowMs: 900, staged: true, exact: .25, n: 1, w: 96, h: 134, unit: 'ОДИН КВАДРАТ — ОДНА КАРТА', hint: 'Колода: 52 карты, четыре масти по 13 карт',
+  question: 'Из перетасованной колоды в 52 карты вытягивают одну. С какой вероятностью это будет черва?',
+  why: 'В колоде четыре масти по 13 карт. Червы составляют ровно четверть колоды.',
+  fact: 'Колоду из 52 карт можно разложить 52! способами. Это число из 68 цифр, примерно 8 × 10⁶⁷. Почти наверняка ни одна хорошо перетасованная колода в истории не повторила порядок другой.',
+  srcName: 'Комбинаторика: число перестановок 52 элементов',
+  trial() { const c = rnd(52); return {c, hit: c % 4 === 0}; },
+  items: (r, p) => [{kind: 'card', rank: RANKS[Math.floor(r.c / 4)], suit: r.c % 4, lp: p / .55, hl: r.hit ? 1 : 2}],
+  status: r => r.hit ? 'Черва' : 'Другая масть'
+}),
+seq({
+  name: 'Красное', slowMs: 900, staged: true, exact: 18 / 37, n: 1, unit: 'ОДИН КВАДРАТ — ОДИН ЗАПУСК', hint: 'Колесо: 37 секторов, 18 красных, 18 чёрных и зелёное зеро',
+  question: 'Европейская рулетка: 18 красных секторов, 18 чёрных и одно зелёное зеро. С какой вероятностью шарик остановится на красном?',
+  why: 'Красных секторов 18 из 37. Это чуть меньше половины, потому что есть ещё зеро.',
+  fact: 'Зеро и есть заработок казино. Ставка на цвет выплачивается один к одному, как будто шансы равны 50%, а на деле они 48,6%. Преимущество казино составляет 1/37, или 2,7% от каждой ставки. В американской рулетке два зеро, и преимущество почти вдвое больше.',
+  srcName: 'Правила европейской рулетки',
+  trial() { const x = rnd(37), v = x === 0 ? 0 : x % 2 ? 1 : 2; return {x, v, hit: v === 1}; },
+  scene(g, r, p, done) {
+    const cx = 320, cy = 142, R = 104, R2 = 66, st = TAU / 37, A = i => -Math.PI / 2 + (i - .5) * st;
+    const sector = i => { g.beginPath(); g.arc(cx, cy, R, A(i), A(i + 1)); g.arc(cx, cy, R2, A(i + 1), A(i), true); g.closePath(); };
+    for (let i = 0; i < 37; i++) { sector(i); g.fillStyle = ROUL[i === 0 ? 0 : i % 2 ? 1 : 2]; g.fill(); g.strokeStyle = 'rgba(201,211,240,.45)'; g.lineWidth = 1; g.stroke(); }
+    g.beginPath(); g.arc(cx, cy, R + 5, 0, TAU); g.strokeStyle = '#c9a25a'; g.lineWidth = 6; g.stroke();
+    g.beginPath(); g.arc(cx, cy, R2 - 3, 0, TAU); g.fillStyle = '#1a2756'; g.fill();
+    g.strokeStyle = '#c9a25a'; g.lineWidth = 3; g.beginPath(); for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2 + (r && !done ? p * 2 : 0); g.moveTo(cx, cy); g.lineTo(cx + 40 * Math.cos(a), cy + 40 * Math.sin(a)); } g.stroke();
+    g.beginPath(); g.arc(cx, cy, 9, 0, TAU); g.fillStyle = '#c9a25a'; g.fill();
+    if (!r) return;
+    const at = -Math.PI / 2 + r.x * st, e = ease(p / .9), a = at - (1 - e) * TAU * 2.2, rad = lerp(R + 5, (R + R2) / 2, clamp01((p - .6) / .3));
+    if (done) { sector(r.x); g.save(); g.shadowColor = r.hit ? C.hit : C.miss; g.shadowBlur = 16; g.strokeStyle = r.hit ? C.hit : C.miss; g.lineWidth = 3; g.stroke(); g.restore(); }
+    g.beginPath(); g.arc(cx + rad * Math.cos(a), cy + rad * Math.sin(a), 6.5, 0, TAU); g.fillStyle = '#ffffff'; g.fill();
+  },
+  status: r => ['Зеро', 'Красное', 'Чёрное'][r.v]
+}),
+seq({
+  name: 'Семёрка', slowMs: 1000, exact: 1 / 6, n: 2, w: 84, h: 84, gap: 22, unit: 'ОДИН КВАДРАТ — ОДИН БРОСОК ПАРЫ', hint: 'Два кубика: сумма от 2 до 12, всего 36 сочетаний',
+  question: 'Бросают два кубика. С какой вероятностью сумма очков будет равна 7?',
+  why: 'У двух кубиков 36 равновероятных исходов. Семёрку дают шесть из них, больше, чем любую другую сумму.',
+  fact: 'На этом построена игра крэпс. Семёрка на первом броске сразу приносит победу, а дальше та же семёрка означает проигрыш. Правила подобраны так, чтобы самая частая сумма решала исход.',
+  srcName: 'Правила игры крэпс',
+  trial() { const d = dice(2); return {d, s: d[0] + d[1], hit: d[0] + d[1] === 7}; },
+  items: r => r.d.map(v => ({kind: 'die', v, hl: r.hit})),
+  status: r => 'Сумма ' + r.s
+}),
+seq({
+  name: 'Мешок с шарами', slowMs: 1100, staged: true, exact: .3, n: 10, w: 48, h: 48, unit: 'ОДИН КВАДРАТ — ОДИН ВЫТЯНУТЫЙ ШАР', hint: 'В мешке 10 шаров: 3 жёлтых и 7 синих',
+  question: 'В мешке 3 жёлтых шара и 7 синих. Не глядя вытягивают один. С какой вероятностью он окажется жёлтым?',
+  why: 'Все 10 шаров равноправны, жёлтых среди них три.',
+  fact: 'С таких мешков началась статистика. В книге «Искусство предположений» (1713) Якоб Бернулли доказал: если много раз вытягивать шар и возвращать его, доля жёлтых будет сколь угодно близка к истинной. Это закон больших чисел, и именно он заставляет полосу частоты в этой игре сходиться.',
+  srcName: 'Bernoulli J. Ars Conjectandi, 1713',
+  trial() { const k = rnd(10); return {k, hit: k < 3}; },
+  items: (r, p) => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => ({kind: 'ball', col: i < 3 ? C.hit : C.miss, lift: i === r.k ? ease((p - .15) / .5) : 0, ring: p >= .6 && i === r.k})),
+  status: r => r.hit ? 'Жёлтый' : 'Синий'
+}),
+seq({
+  name: 'Мальчик или девочка', kind: 'm', slowMs: 900, staged: true, exact: .512, n: 1, w: 120, h: 128, unit: 'ОДИН КВАДРАТ — ОДНО РОЖДЕНИЕ', hint: 'Один новорождённый: мальчик или девочка',
+  question: 'Рождается ребёнок. С какой вероятностью это мальчик?',
+  why: 'Это измеренная частота, а не расчёт: симуляция просто разыгрывает 51,2%. В среднем на 100 девочек рождается около 105 мальчиков.',
+  fact: 'Первым это заметил шотландский врач Джон Арбетнот в 1710 году. Он изучил лондонские записи о крещениях за 82 года подряд и обнаружил, что мальчиков каждый год было больше, чем девочек. Его заметка считается первой в истории статистической проверкой гипотезы.',
+  srcName: 'Arbuthnot J. An Argument for Divine Providence. Philosophical Transactions, 1710',
+  trial() { return {hit: Math.random() < .512}; },
+  items: (r, p) => [{kind: 'kid', boy: r.hit, lp: (p - .45) / .3, hl: r.hit ? 1 : 2}],
+  status: r => r.hit ? 'Мальчик' : 'Девочка'
+}),
+seq({
+  name: 'Выходной', slowMs: 1100, staged: true, exact: 2 / 7, n: 7, w: 56, h: 56, font: '700 15px', unit: 'ОДИН КВАДРАТ — ОДНА СЛУЧАЙНАЯ ДАТА', hint: 'Неделя: пять будних дней и два выходных',
+  question: 'Выбирают случайную дату. С какой вероятностью она выпадет на субботу или воскресенье?',
+  why: 'Дней недели семь, выходных два. На длинном промежутке все дни недели встречаются одинаково часто.',
+  fact: 'Григорианский календарь повторяется каждые 400 лет: в этом цикле 146 097 дней, ровно 20 871 неделя. Из-за этого дни недели распределены по числам чуть неравномерно. Например, 13-е число чаще всего выпадает на пятницу: 688 раз из 4 800 за цикл.',
+  srcName: 'Brown B. H. Solution to Problem E36. American Mathematical Monthly, 1933',
+  trial() { const d = rnd(7); return {d, hit: d >= 5}; },
+  items: (r, p) => ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'].map((t, i) => ({kind: 'day', t, col: i === r.d && p >= .5 ? (r.hit ? 'rgba(255,194,51,.55)' : 'rgba(109,132,220,.6)') : i >= 5 ? 'rgba(255,194,51,.2)' : TINT, hl: p >= .5 && i === r.d ? (r.hit ? 1 : 2) : 0})),
+  status: r => r.hit ? 'Выходной' : 'Будний день'
+}),
+seq({
+  name: 'Ничья', slowMs: 1100, staged: true, exact: 1 / 3, n: 2, w: 104, h: 104, gap: 60, unit: 'ОДИН КВАДРАТ — ОДИН РАУНД', hint: 'Три жеста: камень, ножницы, бумага',
+  question: 'Двое играют в «камень, ножницы, бумага» и выбирают жест случайно. С какой вероятностью раунд закончится ничьей?',
+  why: 'Что бы ни показал первый игрок, второй совпадёт с ним одним жестом из трёх.',
+  fact: 'Живые люди играют не случайно. В 2014 году учёные Чжэцзянского университета записали игры 360 студентов и нашли закономерность: победитель чаще повторяет свой жест, а проигравший меняет его на следующий по кругу. Зная это, можно выигрывать чаще, чем в трети раундов.',
+  srcName: 'Wang Z., Xu B., Zhou H.-J. Social cycling and conditional responses in the Rock-Paper-Scissors game. Scientific Reports, 2014',
+  trial() { const a = rnd(3), b = rnd(3); return {a, b, hit: a === b}; },
+  items: (r, p) => [{kind: 'hand', g: r.a, lp: 1, cap: ['камень', 'ножницы', 'бумага'][r.a]}, {kind: 'hand', g: r.b, lp: (p - .45) / .3, cap: p < .45 ? 'второй игрок' : ['камень', 'ножницы', 'бумага'][r.b], hl: r.hit ? 1 : 2}],
+  status: r => r.hit ? 'Ничья' : 'Есть победитель'
+})
+];
+
+const M0 = ['Здесь нет формулы: это частота из эксперимента, а не расчёт.'];
+const META = {
+'Дротики': [1, ['Сторона квадрата 2, радиус вписанного круга 1.', 'Площадь квадрата: 2 × 2 = 4.', 'Площадь круга: π × 1² ≈ 3,1416.', 'Вероятность равна отношению площадей: π / 4 ≈ 0,785.']],
+'Дни рождения': [3, ['Считаем обратное: у всех 23 человек дни рождения разные.', 'Второй не совпал с первым: 364/365. Третий не совпал с двумя: 363/365. И так до двадцать третьего: 343/365.', 'Перемножаем: 364/365 × 363/365 × … × 343/365 ≈ 0,493.', 'Совпадение есть: 1 − 0,493 = 0,507.']],
+'Доска Гальтона': [2, ['Каждый из 12 отскоков идёт влево или вправо: всего 2¹² = 4 096 равновероятных путей.', 'В центр ведут пути, где ровно 6 отскоков вправо и 6 влево.', 'Число таких путей: C(12, 6) = 12! / (6! × 6!) = 924.', '924 / 4 096 ≈ 0,226.']],
+'Игла Бюффона': [2, ['Пусть шаг линий и длина иглы равны 1, а угол между иглой и линиями равен θ.', 'Поперёк линий игла занимает отрезок длиной sin θ. Значит, при таком угле она пересекает линию с вероятностью sin θ.', 'Все углы от 0° до 180° равновероятны. Среднее значение sin θ на этом промежутке равно 2/π.', '2 / π ≈ 0,637.']],
+'Сломанная палка': [2, ['Длина палки 1. Треугольник нельзя сложить, если один из кусков длиннее 1/2.', 'Левый кусок длиннее 1/2, когда оба разлома попали в правую половину: 1/2 × 1/2 = 1/4. Для правого куска так же: 1/4.', 'Средний кусок длиннее 1/2 тоже с вероятностью 1/4 (это видно на квадрате всех пар разломов).', 'Три случая не пересекаются: 3 × 1/4 = 3/4. Треугольник получается в 1 − 3/4 = 1/4 случаев.']],
+'Центр в треугольнике': [2, ['Центр оказывается вне треугольника, когда все три точки лежат на одной полуокружности.', 'Возьмём одну точку и полуокружность, идущую от неё по часовой стрелке. Две другие точки попадут в неё с вероятностью 1/2 × 1/2 = 1/4.', 'Такой «первой» может быть любая из трёх точек, и эти случаи не пересекаются: 3 × 1/4 = 3/4.', 'Центр внутри: 1 − 3/4 = 1/4.']],
+'Случайная хорда': [2, ['Повернём круг так, чтобы первая точка стала вершиной вписанного треугольника.', 'Две другие вершины делят окружность на три равные дуги по 120°.', 'Хорда длиннее стороны, только когда вторая точка попала на дальнюю дугу, между двумя другими вершинами.', 'Эта дуга занимает 120° / 360° = 1/3 окружности.']],
+'Разорение игрока': [2, ['Пусть p(k) — вероятность дойти до 10, имея k монет. Тогда p(0) = 0 и p(10) = 1.', 'Игра честная, поэтому p(k) = ½ × p(k − 1) + ½ × p(k + 1): каждое значение равно среднему двух соседних.', 'Такому условию удовлетворяет только прямая линия: p(k) = k / 10.', 'p(3) = 3 / 10 = 0,3.']],
+'Тайный Санта': [3, ['Всего способов раздать 10 бумажек: 10! = 3 628 800.', 'Число раздач, где никто не получил себя, даёт формула включений и исключений: 10! × (1 − 1/1! + 1/2! − 1/3! + … + 1/10!) = 1 334 961.', '1 334 961 / 3 628 800 ≈ 0,368.', 'Сумма в скобках быстро сходится к 1/e ≈ 0,3679, поэтому ответ почти не зависит от числа игроков.']],
+'100 заключённых': [3, ['Провал наступает, когда в раскладке есть цепочка длиннее 50 коробок. Такая цепочка может быть только одна.', 'В случайной перестановке 100 элементов цепочка длины ровно k (при k > 50) встречается с вероятностью 1/k.', 'Провал: 1/51 + 1/52 + … + 1/100 ≈ 0,688.', 'Успех: 1 − 0,688 = 0,312.']],
+'Бутерброд': [2, M0.concat(['В опыте 2001 года тост упал маслом вниз примерно в 62% из почти 10 000 падений.', 'Симуляция разыгрывает каждое падение с вероятностью 0,62.'])],
+'Серия в монете': [2, ['Всего последовательностей из 10 бросков: 2¹⁰ = 1 024.', 'Считаем те, где нет четырёх одинаковых подряд. Их число для n бросков подчиняется правилу a(n) = a(n − 1) + a(n − 2) + a(n − 3).', 'Получаем ряд: 2, 4, 8, 14, 26, 48, 88, 162, 298, 548. Для 10 бросков это 548.', 'С длинной серией остаётся 1 024 − 548 = 476 последовательностей: 476 / 1 024 ≈ 0,465.']],
+'Все грани кубика': [2, ['Считаем через обратное событие «какая-то грань не выпала» по формуле включений и исключений.', 'P = 1 − 6 × (5/6)¹⁰ + 15 × (4/6)¹⁰ − 20 × (3/6)¹⁰ + 15 × (2/6)¹⁰ − 6 × (1/6)¹⁰.', 'P = 1 − 0,9691 + 0,2601 − 0,0195 + 0,0003 − 0,0000 ≈ 0,272.']],
+'Пари де Мере': [2, ['Шестёрки нет в одном броске: 5/6.', 'Нет ни в одном из четырёх бросков: (5/6)⁴ = 625 / 1 296 ≈ 0,482.', 'Хотя бы одна шестёрка: 1 − 0,482 = 0,518.']],
+'Две шестёрки': [2, ['Две шестёрки в одном броске пары: 1/36. Не выпали: 35/36.', 'Не выпали ни разу за 24 броска: (35/36)²⁴ ≈ 0,509.', 'Выпали хотя бы раз: 1 − 0,509 = 0,491.']],
+'Загадка Галилея': [2, ['Всего исходов: 6 × 6 × 6 = 216.', 'Наборы с суммой 10 и число их перестановок: 6+3+1 (6 способов), 6+2+2 (3), 5+4+1 (6), 5+3+2 (6), 4+4+2 (3), 4+3+3 (3).', 'Итого 6 + 3 + 6 + 6 + 3 + 3 = 27 исходов.', '27 / 216 = 0,125.']],
+'Плейлист': [3, ['Различимых порядков: 10! / 2⁵ = 113 400 (две песни одного исполнителя между собой не различаем).', 'Порядки без соседних песен одного исполнителя считаем по формуле включений и исключений: 113 400 − 113 400 + 50 400 − 12 600 + 1 800 − 120 = 39 480.', 'Без повторов подряд: 39 480 / 113 400 ≈ 0,348.', 'С повтором: 1 − 0,348 = 0,652.']],
+'Игра Пенни': [3, ['Смотрим на первые два броска.', 'Если это два орла (вероятность 1/4), то дальше идут только орлы до первой решки, и она завершает «орёл, орёл, решка».', 'В остальных случаях (3/4) решка уже выпадала. Перед любыми двумя орлами подряд теперь стоит решка, поэтому «решка, орёл, орёл» завершится раньше.', 'Ответ: 3/4 = 0,75.']],
+'Двое детей': [3, ['Все семьи с двумя детьми: ММ, МД, ДМ, ДД, каждая с вероятностью 1/4.', 'Убираем ДД. Остаются три равновероятных варианта: ММ, МД, ДМ.', 'Оба мальчики только в одном из трёх: 1/3 ≈ 0,333.']],
+'Серия в рулетке': [3, ['Простой формулы нет, считаем по шагам.', 'Состояние — длина текущей серии одного цвета, от 0 до 7. Зеро обнуляет серию (1/37), тот же цвет продлевает её (18/37), другой цвет начинает новую (18/37).', 'Проходим 100 запусков и на каждом пересчитываем вероятности всех состояний, отбрасывая пути, где серия дошла до 8.', 'Вероятность ни разу не получить серию из 8 ≈ 0,733. Ответ: 1 − 0,733 = 0,267.']],
+'Маммограмма': [3, ['Возьмём 1 000 женщин. Больны 10, здоровы 990.', 'Из 10 больных тест найдёт 90%: 9 женщин.', 'Из 990 здоровых ложную тревогу получат 9%: 89 женщин.', 'Положительных результатов 9 + 89 = 98, больны из них 9. Ответ: 9 / 98 ≈ 0,092.']],
+'Первая цифра': [3, ['Число имеет вид 10ˣ, где x выбран равномерно.', 'Первая цифра равна 1, когда дробная часть x лежит между lg 1 = 0 и lg 2 ≈ 0,301.', 'Доля таких x равна 0,301.', 'Для цифры d общая формула lg(1 + 1/d). Для девятки это всего 0,046.']],
+'Честная монета': [1, M0.concat(['В 350 757 бросках монета упала исходной стороной вверх в 50,8% случаев.', 'Симуляция разыгрывает каждый бросок с вероятностью 0,508.'])],
+'Монти Холл': [3, ['Игрок сразу выбрал автомобиль с вероятностью 1/3. Тогда смена двери приводит к козе.', 'Игрок сразу выбрал козу с вероятностью 2/3. Ведущий открывает вторую козу, и за оставшейся дверью автомобиль.', 'Смена двери выигрывает в 2/3 случаев ≈ 0,667.']],
+'Орёл': [1, ['У монеты две стороны, и они равноправны.', '1 / 2 = 0,5.']],
+'Пять или шесть': [1, ['У кубика 6 равновероятных граней.', 'Подходят две: 5 и 6.', '2 / 6 = 1/3 ≈ 0,333.']],
+'Хотя бы один орёл': [1, ['Исходов двух бросков четыре: ОО, ОР, РО, РР. Каждый с вероятностью 1/4.', 'Орла нет только в одном: РР.', '1 − 1/4 = 3/4 = 0,75.']],
+'Черва': [1, ['В колоде 52 карты, черв среди них 13.', '13 / 52 = 1/4 = 0,25.']],
+'Красное': [1, ['Секторов 37: 18 красных, 18 чёрных, 1 зеро.', '18 / 37 ≈ 0,486.']],
+'Семёрка': [1, ['Исходов двух кубиков: 6 × 6 = 36.', 'Сумму 7 дают 1+6, 2+5, 3+4, 4+3, 5+2, 6+1: шесть исходов.', '6 / 36 = 1/6 ≈ 0,167.']],
+'Мешок с шарами': [1, ['В мешке 3 + 7 = 10 шаров, и вытянуть можно любой с равным шансом.', 'Жёлтых 3.', '3 / 10 = 0,3.']],
+'Мальчик или девочка': [1, M0.concat(['На 100 девочек рождается около 105 мальчиков.', '105 / (105 + 100) ≈ 0,512.'])],
+'Выходной': [1, ['В неделе 7 дней, выходных 2.', '2 / 7 ≈ 0,286.']],
+'Ничья': [1, ['Пар жестов: 3 × 3 = 9, все равновероятны.', 'Ничья в трёх: камень-камень, ножницы-ножницы, бумага-бумага.', '3 / 9 = 1/3 ≈ 0,333.']]
+};
+const HINTS = {
+'Дротики': 'Квадратная доска и вписанный в неё круг. Жёлтые точки попали в круг, синие нет.',
+'Дни рождения': 'Календарь на 365 дней. Белая точка — чей-то день рождения, жёлтая — совпадение.',
+'Доска Гальтона': '12 рядов гвоздей и 13 лунок под ними. Жёлтым выделена центральная лунка.',
+'Игла Бюффона': 'Лист с параллельными линиями. Жёлтые иглы пересекли линию, синие нет.',
+'Сломанная палка': 'Сверху палка с двумя разломами, ниже попытка сложить из кусков треугольник.',
+'Центр в треугольнике': 'Окружность с отмеченным центром. Жёлтые треугольники накрыли центр, синие нет.',
+'Случайная хорда': 'Пунктиром показан вписанный треугольник. Жёлтые хорды длиннее его стороны.',
+'Разорение игрока': 'График числа монет у игрока: от трёх на старте до цели в 10 монет или до нуля.',
+'Тайный Санта': '10 человек по кругу. Стрелка показывает, кто кому дарит. Обведён тот, кто вытянул себя.',
+'100 заключённых': '100 коробок. Подсвечена самая длинная цепочка: жёлтая, если в ней не больше 50 коробок.',
+'Бутерброд': 'Обычный стол и пол под ним. Жёлтый слой на тосте — масло.'
+};
+EVENTS.forEach(e => { const m = META[e.name]; e.lvl = m[0]; e.calc = m[1]; e.hint = e.hint || HINTS[e.name]; });
+
+function score(guess, exact) {
+  const err = Math.abs(guess - exact * 100);
+  return {err, pts: err <= 1 ? MAX_PTS : Math.round(MAX_PTS * Math.exp(-err / 10))};
+}
+const rsig = (v, n) => { if (!(v > 0) || !isFinite(v)) return v; const k = Math.pow(10, n - 1 - Math.floor(Math.log10(v))); return Math.round(v * k) / k; };
+const ru = (x, d) => x.toFixed(d == null ? 1 : d).replace('.', ',');
+const tz = s => s.indexOf(',') < 0 ? s : s.replace(/0+$/, '').replace(/,$/, '');
+const plural = (n, a, b, c) => { const m = Math.abs(n) % 100, k = m % 10; return m >= 11 && m <= 14 ? c : k === 1 ? a : k >= 2 && k <= 4 ? b : c; };
+const pick = a => a[rnd(a.length)];
+function fnum(x, sig) {
+  const s = sig || 2, r = rsig(x, s); if (!(r > 0)) return '0';
+  if (r >= 1000) return Math.round(r).toLocaleString('ru-RU');
+  return r.toFixed(Math.max(0, Math.min(8, s - 1 - Math.floor(Math.log10(r))))).replace('.', ',');
+}
+function fmtLen(m, sig) {
+  if (!isFinite(m) || m > 8.8e26) return 'больше видимой Вселенной';
+  const u = m < 1e-3 ? [1e-6, 'мкм'] : m < 1e-2 ? [1e-3, 'мм'] : m < 1 ? [1e-2, 'см'] : m < 1e3 ? [1, 'м'] : m < 1e6 ? [1e3, 'км'] : m < 1e9 ? [1e6, 'тыс. км'] : m < 1e12 ? [1e9, 'млн км'] : m < 1e15 ? [1e12, 'млрд км'] : m < 9.46e18 ? [1e15, 'трлн км'] : [9.46e15, 'световых лет'];
+  return fnum(m / u[0], sig) + ' ' + u[1];
+}
+function gtxt(g, s, x, y, size, col, align, bold) { g.font = (bold ? '700 ' : '500 ') + Math.round(size * Math.min(FS, 1.4)) + 'px' + MONO; g.textAlign = align || 'center'; g.textBaseline = 'middle'; g.fillStyle = col; g.fillText(s, x, y); }
+function gflag(g, x, y, col, h) { g.strokeStyle = col; g.lineWidth = 2.5; g.beginPath(); g.moveTo(x, y); g.lineTo(x, y - h); g.stroke(); g.fillStyle = col; g.beginPath(); g.moveTo(x, y - h); g.lineTo(x + 17, y - h + 7); g.lineTo(x, y - h + 14); g.closePath(); g.fill(); }
+function gruler(g, x, yb, yt, a, b, marks, cur) {
+  const Y = v => yb + (yt - yb) * Math.log(Math.min(b, Math.max(a, v)) / a) / Math.log(b / a);
+  g.strokeStyle = C.line; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x, yb); g.lineTo(x, yt);
+  for (const m of marks) { g.moveTo(x - 5, Y(m.v)); g.lineTo(x + 5, Y(m.v)); }
+  g.stroke();
+  for (const m of marks) gtxt(g, m.t, x + 12, Y(m.v), 11, m.hot ? C.ink : cur != null && m.v <= cur ? C.hit : C.line, 'left', m.hot);
+  return Y;
+}
+function gptr(g, x, y, col, label, up) { g.fillStyle = col; g.beginPath(); g.moveTo(x - 7, y); g.lineTo(x - 19, y - 7); g.lineTo(x - 19, y + 7); g.closePath(); g.fill(); if (label) gtxt(g, label, x - 24, y + (up ? -10 : 10), 12, col, 'right', true); }
+function standFig(g, x, yg, h, col) { const r = h * .09; g.fillStyle = col; g.beginPath(); g.arc(x, yg - h + r, r, 0, TAU); g.fill(); rrect(g, x - h * .13, yg - h + 2.2 * r, h * .26, h * .42, h * .06); g.fill(); g.fillRect(x - h * .11, yg - h * .42, h * .09, h * .42); g.fillRect(x + h * .02, yg - h * .42, h * .09, h * .42); }
+const BERG_PTS = [[0, -10, 14], [30, -46, 40], [70, -70, 78], [110, -118, 104], [160, -140, 132], [210, -126, 142], [250, -92, 100], [285, -40, 56], [300, -6, 10]];
+const CUBE_PTS = [[0, -88, 88], [176, -88, 88]];
+function shapeRows(pts) {
+  const H = pts[pts.length - 1][0], L = [], R = [], A = [0];
+  for (let y = 0; y <= H; y++) { let i = 0; while (i < pts.length - 2 && y > pts[i + 1][0]) i++; const p = pts[i], q = pts[i + 1], t = (y - p[0]) / (q[0] - p[0]); L.push(lerp(p[1], q[1], t)); R.push(lerp(p[2], q[2], t)); if (y) A.push(A[y - 1] + (R[y] - L[y] + R[y - 1] - L[y - 1]) / 2); }
+  return {H, L, R, A};
+}
+function waterRow(sh, f) { const target = (1 - f) * sh.A[sh.H]; let y = 0; while (y < sh.H && sh.A[y + 1] <= target) y++; return y >= sh.H ? sh.H : y + (target - sh.A[y]) / Math.max(1e-9, sh.A[y + 1] - sh.A[y]); }
+function gscore(v, lo, hi, tol) {
+  const e = v < lo ? Math.log(lo / v) : v > hi ? Math.log(v / hi) : 0;
+  return {e, pts: e <= tol ? MAX_PTS : Math.round(MAX_PTS * Math.exp(-e / .25))};
+}
+const GAUGE = [
+{
+  name: 'Бросок за ширму', lvl: 1, min: 8, max: 30, step: .1, tol: .03, live: true,
+  fmt: v => v.toFixed(1).replace('.', ',') + ' м',
+  question: 'Катапульта бросает тяжёлое ядро. Видно только начало полёта, дальше его закрывает ширма. На каком расстоянии от катапульты ядро упадёт на землю?',
+  hint: 'Скорость и угол броска не названы: смотрите на начало дуги. Розовый флажок на земле — ваш прогноз, шкала внизу в метрах.',
+  why: 'Без сопротивления воздуха ядро летит по параболе, а она симметрична: спуск зеркально повторяет подъём. Достаточно мысленно продолжить дугу до вершины и отложить за ней столько же.',
+  fact: 'Что брошенное тело летит по параболе, доказал Галилей в 1638 году. Интуиция при этом часто подводит: в опыте 1980 года примерно половина студентов считала, что шарик, вылетевший из закрученной трубки, продолжит двигаться по кривой. Здесь расчёт сделан без учёта воздуха; для тяжёлого ядра поправка мала.',
+  srcName: 'McCloskey, Caramazza, Green. Curvilinear motion in the absence of external forces. Science, 1980', srcUrl: 'https://doi.org/10.1126/science.210.4474.1139',
+  init(S) {
+    S.th = (35 + Math.random() * 30) * Math.PI / 180; S.R = 14 + Math.random() * 14; S.v = Math.sqrt(S.R * 9.81 / Math.sin(2 * S.th));
+    S.T = 2 * S.v * Math.sin(S.th) / 9.81; S.lo = S.hi = S.R; S.runMs = 600 + S.T * 1000 + 1100; S.truth = this.fmt(S.R);
+  },
+  calc(S) {
+    const f = (x, d) => x.toFixed(d).replace('.', ','), deg = S.th * 180 / Math.PI;
+    return ['Дальность полёта без сопротивления воздуха: L = v² × sin 2θ / g.',
+      'В этом броске скорость v = ' + f(S.v, 1) + ' м/с, угол θ = ' + f(deg, 0) + '°. В игре они не названы, их нужно было оценить по началу дуги.',
+      'L = ' + f(S.v, 1) + '² × sin ' + f(2 * deg, 0) + '° / 9,81 ≈ ' + f(S.R, 1) + ' м.',
+      'На глаз проще так: вершина дуги находится ровно над серединой пути, высота вершины здесь ' + f(S.R * Math.tan(S.th) / 4, 1) + ' м.'];
+  },
+  draw(g, S, ph, ms, guess) {
+    const K = 19.3, X = m => 50 + m * K, Y = m => 420 - m * K, XS = X(6.3), vx = S.v * Math.cos(S.th), vy = S.v * Math.sin(S.th);
+    const pos = t => [X(vx * t), Y(vy * t - 4.905 * t * t) - 7];
+    const trail = (t1, col, w) => { g.strokeStyle = col; g.lineWidth = w; g.setLineDash([2, 7]); g.lineCap = 'round'; g.beginPath(); for (let t = 0; t < t1; t += .02) { const q = pos(t); t ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); } const q = pos(t1); g.lineTo(q[0], q[1]); g.stroke(); g.setLineDash([]); g.lineCap = 'butt'; };
+    const ball = t => { const q = pos(t); g.fillStyle = '#c9d3f0'; g.beginPath(); g.arc(q[0], q[1], 7, 0, TAU); g.fill(); g.fillStyle = 'rgba(255,255,255,.7)'; g.beginPath(); g.arc(q[0] - 2, q[1] - 2.5, 2, 0, TAU); g.fill(); };
+    const flag = (m, col, label) => {
+      const x = X(m); g.strokeStyle = col; g.lineWidth = 2.5; g.beginPath(); g.moveTo(x, 420); g.lineTo(x, 380); g.stroke();
+      g.fillStyle = col; g.beginPath(); g.moveTo(x, 380); g.lineTo(x + 18, 387); g.lineTo(x, 394); g.closePath(); g.fill();
+      if (label) { g.font = '700 ' + Math.round(12 * Math.min(FS, 1.4)) + 'px' + MONO; g.textBaseline = 'middle'; g.textAlign = m > 22 ? 'right' : 'left'; g.fillText(label, x + (m > 22 ? -8 : 24), 372); }
+    };
+    g.strokeStyle = C.line; g.lineWidth = 2; g.beginPath(); g.moveTo(0, 421); g.lineTo(640, 421); g.stroke();
+    g.font = '500 ' + Math.round(11 * Math.min(FS, 1.35)) + 'px' + MONO; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = C.line; g.lineWidth = 1; g.beginPath();
+    for (let m = 0; m <= 30; m++) { g.moveTo(X(m), 421); g.lineTo(X(m), m % 5 ? 426 : 432); if (m % 5 === 0) g.fillText(m, X(m), 446); }
+    g.stroke();
+    g.fillStyle = '#8a6a50'; g.beginPath(); g.moveTo(26, 420); g.lineTo(50, 396); g.lineTo(66, 420); g.closePath(); g.fill();
+    g.strokeStyle = '#c9a25a'; g.lineWidth = 6; g.lineCap = 'round'; g.beginPath(); g.moveTo(50, 400); g.lineTo(50 + 36 * Math.cos(S.th), 400 - 36 * Math.sin(S.th)); g.stroke(); g.lineCap = 'butt';
+    let alpha = 1, tb = 0, landed = false;
+    if (ph === 'guess') { const tv = 6.3 / vx, tt = S.still ? tv : (ms / 1000) % (tv + 1.1); if (tt <= tv) { trail(tt, C.line, 2); ball(tt); } }
+    else { const e = ph === 'result' ? 1e9 : ms; alpha = 1 - .9 * clamp01(e / 500); tb = Math.min(S.T, Math.max(0, (e - 600) / 1000)); landed = e >= 600 + S.T * 1000; }
+    g.globalAlpha = alpha; g.fillStyle = '#243672'; g.fillRect(XS, 20, 634 - XS, 386);
+    g.strokeStyle = 'rgba(176,194,255,.28)'; g.lineWidth = 1; g.beginPath(); for (let x = XS + 18; x < 634; x += 26) { g.moveTo(x, 20); g.lineTo(x, 406); } g.stroke();
+    g.strokeStyle = '#c9d3f0'; g.lineWidth = 2; g.strokeRect(XS, 20, 634 - XS, 386);
+    if (alpha > .5) { g.fillStyle = C.ink; g.font = '700 ' + Math.round(15 * Math.min(FS, 1.4)) + 'px' + MONO; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('ШИРМА', (XS + 634) / 2, 200); }
+    g.globalAlpha = 1;
+    if (ph !== 'guess') {
+      trail(tb, C.hit, 2.5); ball(tb);
+      if (landed) { const k = ph === 'result' ? 1 : clamp01((ms - 600 - S.T * 1000) / 500); g.strokeStyle = C.hit; g.lineWidth = 3; g.globalAlpha = 1 - k * .6; g.beginPath(); g.ellipse(X(S.R), 419, 10 + 26 * k, 4 + 8 * k, 0, 0, TAU); g.stroke(); g.globalAlpha = 1; flag(S.R, C.ink, 'упало: ' + S.truth); }
+    }
+    flag(guess, C.you, ph === 'guess' ? '' : '');
+  }
+},
+{
+  name: 'Пролитый стакан', lvl: 2, min: 5, max: 100, step: 1, log: true, tol: 0,
+  fmt: v => Math.round(v) + ' см',
+  question: 'Стакан воды, 200 мл, опрокинулся на гладкий ровный стол. Какого диаметра получится лужа, когда вода перестанет растекаться?',
+  hint: 'Вид на стол сверху, всё в одном масштабе. Розовый пунктир — ваш прогноз. Для сравнения показаны линейка и лист A4.',
+  why: 'Вода не растекается бесконечно: на обычной столешнице слой останавливается на толщине около 3 мм. Стакан кажется маленьким, но 200 мл таким тонким слоем занимают площадь большой тарелки.',
+  fact: 'Толщину лужи задаёт баланс силы тяжести и поверхностного натяжения. Физики описывают его капиллярной длиной, у воды она равна 2,7 мм. По той же причине мелкие капли круглые, а большие расплющиваются. Ответ здесь — расчётный диапазон: он зависит от покрытия стола, а форму лужи и направление потёка предсказать нельзя.',
+  srcName: 'Herminghaus S., Brochard F. Dewetting through nucleation and growth of dry regions. Comptes Rendus Physique, 2006', srcUrl: 'https://doi.org/10.1016/j.crhy.2006.10.021',
+  init(S) {
+    const d = deg => 2 * Math.sqrt(200 / (Math.PI * 2 * .27 * Math.sin(deg * Math.PI / 360)));
+    S.lo = d(90); S.hi = d(50); S.d = d(70); S.runMs = 3400; S.truth = Math.round(S.lo) + '–' + Math.round(S.hi) + ' см'; S.a = Math.random() * TAU;
+  },
+  calc() {
+    return ['Лужа перестаёт растекаться, когда вес воды уравновешен поверхностным натяжением. Толщина слоя: h = 2 × λ × sin(θ/2).',
+      'Капиллярная длина воды λ = 2,7 мм. Угол смачивания θ для лака, пластика и ламината примерно 50–90°, отсюда h ≈ 2,3–3,8 мм. Это допущение: для вашего стола угол может быть другим.',
+      'Площадь лужи: 200 см³ / h ≈ 520–880 см².',
+      'Диаметр круга такой площади: 26–33 см. На чистом стекле слой тоньше и лужа шире, на жирной поверхности наоборот.'];
+  },
+  draw(g, S, ph, ms, guess) {
+    const K = 4.2, cx = 330, cy = 232, fs = Math.round(12 * Math.min(FS, 1.4));
+    rrect(g, 14, 12, 612, 456, 14); g.fillStyle = '#1b2a5c'; g.fill(); g.strokeStyle = C.dim; g.lineWidth = 1.5; g.stroke();
+    g.setLineDash([4, 4]); g.strokeStyle = C.line; g.lineWidth = 1; g.strokeRect(528, 24, 21 * K, 29.7 * K); g.setLineDash([]);
+    g.font = '500 ' + Math.round(11 * Math.min(FS, 1.35)) + 'px' + MONO; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = C.line; g.fillText('лист A4', 528 + 21 * K / 2, 24 + 29.7 * K / 2);
+    g.strokeStyle = C.line; g.beginPath(); g.moveTo(40, 440); g.lineTo(40 + 100 * K, 440);
+    for (let c = 0; c <= 100; c += 10) { g.moveTo(40 + c * K, 440); g.lineTo(40 + c * K, c % 20 ? 446 : 450); if (c % 20 === 0) g.fillText(c, 40 + c * K, 458); }
+    g.stroke(); g.textAlign = 'left'; g.fillText('см', 40 + 100 * K + 14, 458);
+    const done = ph === 'result' || (ph === 'run' && ms >= 2400);
+    if (ph !== 'guess') {
+      const R = S.d / 2 * K * (ph === 'result' ? 1 : ease(ms / 2400));
+      g.beginPath(); for (let i = 0; i <= 72; i++) { const f = i / 72 * TAU, r = R * (1 + .06 * Math.sin(3 * f + S.a) + .04 * Math.sin(5 * f + 2 * S.a)); i ? g.lineTo(cx + r * Math.cos(f), cy + r * Math.sin(f)) : g.moveTo(cx + r * Math.cos(f), cy + r * Math.sin(f)); }
+      g.closePath(); g.fillStyle = 'rgba(110,185,255,.5)'; g.fill(); g.strokeStyle = 'rgba(200,230,255,.9)'; g.lineWidth = 2; g.stroke();
+    }
+    g.save(); g.translate(cx - 6, cy + 4); g.rotate(-.5); rrect(g, -26, -15, 52, 30, 6); g.fillStyle = 'rgba(210,230,255,.28)'; g.fill(); g.strokeStyle = '#dfe7ff'; g.lineWidth = 2; g.stroke();
+    g.beginPath(); g.ellipse(26, 0, 5, 15, 0, 0, TAU); g.stroke(); g.restore();
+    if (done) {
+      g.strokeStyle = C.ink; g.lineWidth = 1.5; g.setLineDash([2, 5]);
+      for (const d of [S.lo, S.hi]) { g.beginPath(); g.arc(cx, cy, d / 2 * K, 0, TAU); g.stroke(); }
+      g.setLineDash([]); g.fillStyle = C.ink; g.font = '700 ' + fs + 'px' + MONO; g.textAlign = 'center'; g.fillText('в реальности: ' + S.truth, cx, cy + S.hi / 2 * K + 16);
+    }
+    const gr = guess / 2 * K; g.setLineDash([7, 6]); g.strokeStyle = C.you; g.lineWidth = 2.5; g.beginPath(); g.arc(cx, cy, gr, 0, TAU); g.stroke(); g.setLineDash([]);
+    g.fillStyle = C.you; g.font = '700 ' + fs + 'px' + MONO; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('ваш прогноз: ' + this.fmt(guess), cx, Math.max(30, cy - gr - 12));
+  }
+},
+{
+  name: 'Гроза', lvl: 1, min: .1, max: 8, step: .1, tol: .03,
+  fmt: v => v < .95 ? Math.round(v * 1000) + ' м' : ru(v, 1) + ' км',
+  question: S => 'Вы увидели вспышку молнии, а гром услышали через ' + S.n + ' ' + plural(S.n, 'секунду', 'секунды', 'секунд') + '. На каком расстоянии от вас ударила молния?',
+  hint: 'Слева ваш дом, шкала внизу показывает километры. Розовая туча — ваш прогноз, её двигает ползунок.',
+  why: 'Свет доходит мгновенно, а звук проходит около 340 метров в секунду, то есть километр примерно за три секунды. Число секунд, делённое на три, даёт расстояние в километрах.',
+  fact: 'На этом счёте построено правило безопасности «30–30», которое рекомендует Национальная метеослужба США: если между вспышкой и громом прошло меньше 30 секунд, молния ближе 10 километров и пора уходить в укрытие. Выходить стоит не раньше чем через 30 минут после последнего раската.',
+  srcName: 'Live Science: How far away is lightning?', srcUrl: 'https://livescience.com/37734-how-far-away-is-lightning-distance.html',
+  init(S) { S.n = 3 + rnd(10); S.lo = .331 * S.n; S.hi = .349 * S.n; S.mid = .343 * S.n; S.truth = ru(S.lo, 2) + '–' + ru(S.hi, 2) + ' км'; S.runMs = 4200; },
+  calc(S) { return ['Свет от молнии доходит практически мгновенно, задержку создаёт только звук.', 'Скорость звука в воздухе зависит от температуры: 331 м/с при 0 °C, 343 м/с при 20 °C, 349 м/с при 30 °C.', 'Расстояние = скорость × время: от 331 × ' + S.n + ' до 349 × ' + S.n + ' метров, то есть ' + S.truth + '.', 'Правило на каждый день: три секунды — примерно один километр.']; },
+  draw(g, S, ph, ms, guess) {
+    const X = k => 70 + k * 68.5, GY = 372, e = ph === 'guess' ? -1 : ph === 'result' ? 1e9 : ms, xt = X(S.mid), xg = X(guess), cx = x => Math.min(532, Math.max(108, x));
+    g.fillStyle = '#0a1230'; g.fillRect(0, 0, 640, GY); g.fillStyle = '#18254f'; g.fillRect(0, GY, 640, 108);
+    g.strokeStyle = C.line; g.lineWidth = 1; g.beginPath();
+    for (let k = 0; k <= 16; k++) { g.moveTo(X(k / 2), GY); g.lineTo(X(k / 2), GY + (k % 2 ? 5 : 10)); }
+    g.stroke();
+    for (let k = 0; k <= 8; k++) gtxt(g, k, X(k), GY + 24, 11, C.line);
+    gtxt(g, 'километры от дома', 345, GY + 52, 11, C.line);
+    const boom = e >= 2900 && e < 3700;
+    g.fillStyle = '#2b3a78'; g.fillRect(28, GY - 34, 36, 34); g.beginPath(); g.moveTo(22, GY - 34); g.lineTo(46, GY - 54); g.lineTo(70, GY - 34); g.closePath(); g.fill();
+    g.fillStyle = boom ? '#ffffff' : '#ffd76a'; g.fillRect(40, GY - 24, 12, 13);
+    const cloud = (x, col) => { g.fillStyle = col; g.beginPath(); for (const c of [[-30, 8, 20], [-8, -8, 26], [20, -2, 22], [38, 10, 16], [4, 12, 22]]) { g.moveTo(x + c[0] + c[2], 124 + c[1]); g.arc(x + c[0], 124 + c[1], c[2], 0, TAU); } g.fill(); };
+    const bolt = (x, col, w, dash) => { g.setLineDash(dash); g.strokeStyle = col; g.lineWidth = w; g.lineJoin = 'round'; g.beginPath(); g.moveTo(x, 150); g.lineTo(x - 14, 222); g.lineTo(x + 6, 226); g.lineTo(x - 10, 298); g.lineTo(x + 8, 302); g.lineTo(x, GY); g.stroke(); g.setLineDash([]); };
+    cloud(xg, 'rgba(255,111,134,.32)'); bolt(xg, C.you, 2, [5, 6]);
+    gtxt(g, 'ваш прогноз: ' + this.fmt(guess), cx(xg), 58, 12, C.you, 'center', true);
+    if (e >= 0) {
+      cloud(xt, '#97a3cd'); bolt(xt, e < 260 ? '#ffffff' : '#ffe680', e < 260 ? 5 : 3, []);
+      if (e < 260) { g.fillStyle = 'rgba(255,255,255,' + (.45 * (1 - e / 260)).toFixed(3) + ')'; g.fillRect(0, 0, 640, GY); }
+      const f = clamp01((e - 300) / 2600), D = xt - X(0);
+      if (f > 0 && f < 1) { g.save(); g.beginPath(); g.rect(0, 0, 640, GY); g.clip(); for (let i = 0; i < 3; i++) { const r = f * D - i * 14; if (r > 0) { g.strokeStyle = 'rgba(238,241,255,' + (.8 - i * .25) + ')'; g.lineWidth = 2.5; g.beginPath(); g.arc(xt, GY, r, Math.PI, TAU); g.stroke(); } } g.restore(); }
+      gtxt(g, f < 1 ? 'после вспышки прошло ' + ru(f * S.n, 1) + ' с' : 'гром дошёл за ' + S.n + ' с', 20, 24, 13, C.ink, 'left', true);
+      if (f >= 1) gtxt(g, 'молния: ' + S.truth, cx(xt), 82, 12, C.ink, 'center', true);
+    }
+  }
+},
+{
+  name: 'Качели', lvl: 1, min: .5, max: 7, step: .1, tol: .03,
+  fmt: v => ru(v, 1) + ' м',
+  question: S => 'Взрослый весом ' + S.M + ' кг сидит на качелях-балансире в ' + tz(ru(S.a, 1)) + ' м от опоры. На каком расстоянии от опоры должен сесть ребёнок весом ' + S.m + ' кг, чтобы качели пришли в равновесие?',
+  hint: 'Доска размечена в метрах от опоры. Розовая фигурка — ребёнок, его двигает ползунок. Пока вы выбираете, доску держат подпорки.',
+  why: 'Правило рычага: вес, умноженный на расстояние до опоры, с обеих сторон должен совпадать. Во сколько раз ребёнок легче, во столько раз дальше ему нужно сесть.',
+  fact: 'Закон рычага доказал Архимед в III веке до нашей эры в трактате «О равновесии плоских фигур». Ему же приписывают слова: «Дайте мне точку опоры, и я переверну Землю».',
+  srcName: 'Архимед. О равновесии плоских фигур, III век до н. э.',
+  init(S) { do { S.M = pick([60, 70, 80, 90]); S.a = pick([1, 1.5, 2]); S.m = pick([20, 25, 30, 35]); S.x = S.M * S.a / S.m; } while (S.x < 2 || S.x > 6.5); S.lo = S.hi = S.x; S.truth = tz(ru(S.x, 2)) + ' м'; S.runMs = 3300; },
+  calc(S) { const mo = tz(ru(S.M * S.a, 1)); return ['Равновесие рычага: вес × плечо слева равен весу × плечо справа.', 'Слева: ' + S.M + ' кг × ' + tz(ru(S.a, 1)) + ' м = ' + mo + ' кг·м.', 'Справа должно получиться столько же: ' + S.m + ' кг × x = ' + mo + ' кг·м, откуда x = ' + S.truth + '.', 'Доска симметрична относительно опоры, поэтому её собственный вес на равновесие не влияет.']; },
+  draw(g, S, ph, ms, guess) {
+    const K = 42, PX = 320, PY = 318, GY = 400, e = ph === 'guess' ? -1 : ph === 'result' ? 1e9 : ms;
+    const off = Math.abs(Math.log(guess / S.x)) > this.tol, dir = guess > S.x ? 1 : -1;
+    let ang = 0;
+    if (e >= 0) ang = off ? dir * .17 * ease(e / 900) : (e < 1600 ? .025 * Math.sin(e / 110) * (1 - e / 1600) : 0);
+    g.strokeStyle = C.line; g.lineWidth = 2; g.beginPath(); g.moveTo(0, GY); g.lineTo(640, GY); g.stroke();
+    if (e < 0) { g.setLineDash([4, 5]); g.beginPath(); for (const k of [-1, 1]) { g.moveTo(PX + k * 6.2 * K, PY + 6); g.lineTo(PX + k * 6.2 * K, GY); } g.stroke(); g.setLineDash([]); }
+    g.fillStyle = '#5b6aa8'; g.beginPath(); g.moveTo(PX, PY + 4); g.lineTo(PX - 34, GY); g.lineTo(PX + 34, GY); g.closePath(); g.fill();
+    g.save(); g.translate(PX, PY); g.rotate(ang);
+    g.fillStyle = '#b98a4e'; g.fillRect(-7 * K - 8, -6, 14 * K + 16, 10);
+    g.strokeStyle = '#6b4a22'; g.lineWidth = 1.5; g.beginPath(); for (let k = -7; k <= 7; k++) { g.moveTo(k * K, -6); g.lineTo(k * K, 4); } g.stroke();
+    for (let k = 1; k <= 7; k++) { gtxt(g, k, k * K, 17, 10, C.line); if (k <= 2) gtxt(g, k, -k * K, 17, 10, C.line); }
+    const sit = (x, s, col, label, right) => { g.save(); g.translate(x, -6 - .42 * s); personIcon(g, s, col); g.restore(); if (label) gtxt(g, label, x + (right ? 14 : 0), -6 - .79 * s - 14, 12, col, right ? 'right' : 'center', true); };
+    sit(-S.a * K, 74, '#c9d3f0', S.M + ' кг');
+    if (e >= 1500) { g.globalAlpha = .45; sit(S.x * K, 46, C.ink, ''); g.globalAlpha = 1; g.fillStyle = C.ink; g.beginPath(); g.moveTo(S.x * K, 6); g.lineTo(S.x * K - 7, 19); g.lineTo(S.x * K + 7, 19); g.closePath(); g.fill(); }
+    sit(guess * K, 46, C.you, S.m + ' кг', guess > 5.6);
+    g.restore();
+    if (e >= 0) gtxt(g, !off ? 'качели в равновесии' : dir > 0 ? 'ребёнок сел слишком далеко и перевешивает' : 'ребёнок сел слишком близко, перевешивает взрослый', 320, 40, 13, off ? C.you : C.hit, 'center', true);
+    if (e >= 1500) gtxt(g, 'равновесие на отметке ' + S.truth, 320, 66, 13, C.ink, 'center', true);
+  }
+},
+{
+  name: 'Айсберг', lvl: 1, min: 5, max: 99, step: 1, tol: .012,
+  fmt: v => Math.round(v) + '%',
+  question: S => S.sc.q,
+  hint: 'Разрез: сверху воздух, снизу вода. Ползунок опускает и поднимает лёд, розовые подписи показывают ваш прогноз.',
+  why: S => S.sc.why, fact: S => S.sc.fact, srcName: S => S.sc.src, srcUrl: S => S.sc.url,
+  init(S) {
+    const law = ['Закон Архимеда: тело погружается, пока вес вытесненной воды не сравняется с его собственным весом.', 'Отсюда доля объёма под водой равна плотности тела, делённой на плотность воды.'];
+    S.sc = pick([
+      {k: 0, q: 'Айсберг плавает в океане. Какая часть его объёма находится под водой?', lo: 87.4, hi: 89.9, truth: '87–90%', air: '10–13%', pts: BERG_PTS,
+        why: 'Лёд лишь немного легче воды, примерно на десятую часть. Поэтому над водой остаётся только около десятой части айсберга, а остальное скрыто.',
+        fact: 'Международный ледовый патруль, созданный после гибели «Титаника», даёт оценку «около семи восьмых под водой». Лёд айсбергов обычно чуть легче чистого льда, около 900 кг/м³ против 917, поэтому точная доля зависит от плотности льда и солёности воды.',
+        src: 'U.S. Coast Guard, International Ice Patrol: How much of an iceberg is below the water', url: 'https://www.navcen.uscg.gov/node/380',
+        calc: law.concat(['Лёд айсберга: 900–917 кг/м³. Морская вода: 1 020–1 030 кг/м³.', 'От 900 / 1 030 ≈ 0,87 до 917 / 1 020 ≈ 0,90. Под водой 87–90% объёма.'])},
+      {k: 1, q: 'Кубик льда плавает в стакане с пресной водой. Какая часть кубика находится под водой?', lo: 91.7, hi: 91.9, truth: 'около 92%', air: 'около 8%', pts: CUBE_PTS,
+        why: 'Плотность льда 917 килограммов на кубометр, воды — 1 000. Кубик погружается, пока вес вытесненной воды не сравняется с его весом, то есть почти на 92%.',
+        fact: 'Отсюда известное следствие: когда лёд в стакане растает, уровень воды не изменится. Талая вода займёт ровно тот объём, который вытеснял плавающий кубик. У айсбергов в океане под водой чуть меньше, 87–90%: морская вода солёная и плотнее пресной.',
+        src: 'Закон Архимеда; плотность льда 917 кг/м³', url: '',
+        calc: law.concat(['Лёд: 917 кг/м³. Пресная вода: 998–1 000 кг/м³.', '917 / 1 000 ≈ 0,917. Под водой около 92% кубика, над водой около 8%.'])}
+    ]);
+    S.lo = S.sc.lo; S.hi = S.sc.hi; S.mid = (S.lo + S.hi) / 2; S.truth = S.sc.truth; S.sh = shapeRows(S.sc.pts); S.runMs = 3700;
+  },
+  calc(S) { return S.sc.calc; },
+  draw(g, S, ph, ms, guess) {
+    const Y0 = 170, sh = S.sh, e = ph === 'guess' ? -1 : ph === 'result' ? 1e9 : ms, cube = S.sc.k === 1, cx = cube ? 400 : 360, lim = f => Math.min(.995, Math.max(.01, f));
+    let f = guess / 100;
+    if (e >= 0) f = e >= 2600 ? S.mid / 100 : S.mid / 100 + (guess - S.mid) / 100 * Math.exp(-e / 520) * Math.cos(e / 150);
+    const top = Y0 - waterRow(sh, lim(f)), bot = cube ? 430 : 480, x0 = cube ? cx - 150 : 0, x1 = cube ? cx + 150 : 640;
+    g.fillStyle = '#101b45'; g.fillRect(0, 0, 640, 480);
+    g.fillStyle = '#14407f'; g.fillRect(x0, Y0, x1 - x0, bot - Y0);
+    const path = () => { g.beginPath(); for (let y = 0; y <= sh.H; y += 2) g.lineTo(cx + sh.L[y], top + y); for (let y = sh.H; y >= 0; y -= 2) g.lineTo(cx + sh.R[y], top + y); g.closePath(); };
+    g.save(); g.beginPath(); g.rect(0, 0, 640, Y0); g.clip(); path(); g.fillStyle = '#f1f7ff'; g.fill(); g.restore();
+    g.save(); g.beginPath(); g.rect(0, Y0, 640, 480 - Y0); g.clip(); path(); g.fillStyle = '#7fb4e6'; g.fill(); g.restore();
+    path(); g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = 1.5; g.stroke();
+    g.strokeStyle = 'rgba(200,230,255,.95)'; g.lineWidth = 2; g.beginPath(); g.moveTo(x0, Y0); g.lineTo(x1, Y0); g.stroke();
+    if (cube) { g.strokeStyle = '#dfe7ff'; g.lineWidth = 3; g.beginPath(); g.moveTo(x0, 60); g.lineTo(x0, bot); g.lineTo(x1, bot); g.lineTo(x1, 60); g.stroke(); }
+    if (e < 0) { gtxt(g, 'над водой: ' + (100 - guess) + '%', 16, Y0 - 24, 13, C.you, 'left', true); gtxt(g, 'под водой: ' + guess + '%', 16, Y0 + 26, 13, C.you, 'left', true); return; }
+    const yg = top + waterRow(sh, lim(guess / 100));
+    g.setLineDash([6, 6]); g.strokeStyle = C.you; g.lineWidth = 2; g.beginPath(); g.moveTo(cx - 170, yg); g.lineTo(cx + 170, yg); g.stroke(); g.setLineDash([]);
+    gtxt(g, 'ваша ватерлиния: ' + guess + '%', 624, Math.min(462, Math.max(18, yg - 13)), 12, C.you, 'right', true);
+    if (e >= 2600) { gtxt(g, 'над водой: ' + S.sc.air, 16, Y0 - 24, 13, C.ink, 'left', true); gtxt(g, 'под водой: ' + S.truth, 16, Y0 + 26, 13, C.ink, 'left', true); }
+  }
+},
+{
+  name: 'Тормозной путь', lvl: 2, min: 10, max: 100, step: .5, tol: .03, live: true,
+  fmt: v => tz(ru(v, 1)) + ' м',
+  question: S => 'На скорости 50 км/ч машина при экстренном торможении останавливается так, как показано на верхней полосе. Сколько метров ей понадобится, чтобы остановиться со скорости ' + S.V + ' км/ч?',
+  hint: 'Вид сверху, шкала в метрах от точки, где водитель нажал на тормоз. Розовый флажок — ваш прогноз. Время реакции водителя не учитывается.',
+  why: 'Тормозной путь растёт как квадрат скорости: вдвое быстрее — вчетверо дальше. Тормоза должны погасить энергию движения, а она пропорциональна квадрату скорости.',
+  fact: 'Замедление в игре взято из британских Правил дорожного движения, где тормозные пути приводятся с 1946 года: 14 метров с 30 миль в час и 55 метров с 60. В опросе автомобильной ассоциации AA больше 10 000 водителей оценивали эти расстояния на глаз и для 20 миль в час назвали в среднем 25 метров вместо 6.',
+  srcName: 'The AA: Drivers overestimate stopping distances', srcUrl: 'https://www.theaa.com/about-us/newsroom/insurance-news/drivers-overestimate-stopping-distances',
+  init(S) { S.V = pick([70, 80, 90, 100]); S.A = 6.56; S.v1 = 50 / 3.6; S.v2 = S.V / 3.6; S.d1 = S.v1 * S.v1 / (2 * S.A); S.d = S.v2 * S.v2 / (2 * S.A); S.lo = S.hi = S.d; S.truth = ru(S.d, 1) + ' м'; S.runMs = (8 / S.v2 + S.v2 / S.A) * 1000 + 1400; },
+  calc(S) { const k = tz(ru(S.V / 50, 1)); return ['Тормозной путь: s = v² / (2a), где a — замедление. В британских Правилах для сухой дороги заложено a ≈ 6,56 м/с².', '50 км/ч = 13,9 м/с, отсюда s = 13,9² / (2 × 6,56) ≈ ' + ru(S.d1, 1) + ' м.', S.V + ' км/ч = ' + ru(S.v2, 1) + ' м/с, отсюда s ≈ ' + S.truth + '.', 'Без формулы: скорость выше в ' + k + ' раза, значит путь длиннее в ' + k + '² = ' + tz(ru(S.V * S.V / 2500, 2)) + ' раза.']; },
+  draw(g, S, ph, ms, guess) {
+    const X = m => 34 + m * 5.8, Y1 = 112, Y2 = 250, e = ph === 'guess' ? -1 : ph === 'result' ? 1e9 : ms / 1000;
+    const road = (y, label) => { g.fillStyle = '#232d55'; g.fillRect(0, y - 15, 640, 30); g.strokeStyle = 'rgba(238,241,255,.5)'; g.lineWidth = 1; g.beginPath(); g.moveTo(0, y - 15); g.lineTo(640, y - 15); g.moveTo(0, y + 15); g.lineTo(640, y + 15); g.stroke(); g.fillStyle = C.ink; g.fillRect(X(0) - 1.5, y - 15, 3, 30); gtxt(g, label, X(0) + 8, y + 32, 12, C.ink, 'left', true); };
+    const car = (m, y, col, braking) => { const x = X(m); rrect(g, x - 26, y - 6, 26, 12, 3); g.fillStyle = col; g.fill(); g.fillStyle = 'rgba(11,20,48,.6)'; g.fillRect(x - 12, y - 5, 5, 10); g.fillRect(x - 22, y - 5, 3, 10); if (braking) { g.fillStyle = '#ff4d4d'; g.fillRect(x - 28, y - 6, 3, 4); g.fillRect(x - 28, y + 2, 3, 4); } };
+    const skid = (m, y) => { if (m <= 0) return; g.strokeStyle = 'rgba(5,8,20,.8)'; g.lineWidth = 2; g.beginPath(); g.moveTo(X(0), y - 4); g.lineTo(X(m) - 4, y - 4); g.moveTo(X(0), y + 4); g.lineTo(X(m) - 4, y + 4); g.stroke(); };
+    const move = (t, v) => { const ta = 8 / v, tb = v / S.A, q = t - ta; return t < ta ? {m: -8 + v * t, v} : q < tb ? {m: v * q - S.A * q * q / 2, b: true, v: v - S.A * q} : {m: v * v / (2 * S.A), v: 0, done: true}; };
+    const r = S.still || e >= 0 ? move(99, S.v1) : move((ms / 1000) % (8 / S.v1 + S.v1 / S.A + 1.7), S.v1);
+    const c = e < 0 ? {m: -1.5, v: S.v2} : move(e, S.v2);
+    road(Y1, 'Скорость 50 км/ч'); road(Y2, e >= 0 && !c.done ? 'Сейчас ' + Math.round(c.v * 3.6) + ' км/ч' : 'Скорость ' + S.V + ' км/ч');
+    g.strokeStyle = C.line; g.lineWidth = 1; g.beginPath(); g.moveTo(X(0), 326); g.lineTo(X(100), 326);
+    for (let m = 0; m <= 100; m += 5) { g.moveTo(X(m), 326); g.lineTo(X(m), m % 10 ? 331 : 336); }
+    g.stroke();
+    for (let m = 0; m <= 100; m += 20) gtxt(g, m, X(m), 350, 11, C.line);
+    gtxt(g, 'метры от начала торможения', X(50), 374, 11, C.line);
+    skid(Math.max(0, r.m), Y1); car(r.m, Y1, '#c9d3f0', r.b);
+    if (r.done) gtxt(g, 'остановилась: ' + ru(S.d1, 1) + ' м', X(S.d1) + 10, Y1, 12, C.ink, 'left', true);
+    skid(Math.max(0, c.m), Y2); car(c.m, Y2, C.hit, c.b);
+    gflag(g, X(guess), Y2 - 15, C.you, 34);
+    gtxt(g, 'ваш прогноз: ' + this.fmt(guess), Math.min(540, Math.max(104, X(guess))), Y2 - 66, 12, C.you, 'center', true);
+    if (c.done) { gflag(g, X(S.d), Y2 - 15, C.ink, 22); gtxt(g, 'остановилась: ' + S.truth, X(S.d) + 10, Y2, 12, C.ink, 'left', true); }
+  }
+},
+{
+  name: 'Падение', lvl: 2, min: 1, max: 300, log: true, sig: 2, tol: .03,
+  fmt: v => fnum(v, 2) + ' км/ч',
+  question: S => S.sc.q,
+  hint: 'Слева высота в масштабе и фигурка человека ростом 1,7 м для сравнения. Справа шкала скоростей: розовая стрелка — ваш прогноз.',
+  why: 'Скорость растёт как квадратный корень из высоты: чтобы удариться вдвое быстрее, нужно упасть с высоты вчетверо больше. Уже со стола предмет успевает разогнаться до скорости бегуна.',
+  fact: 'Масса предмета на скорость не влияет, если не мешает воздух. В 1971 году астронавт Дэвид Скотт на Луне одновременно отпустил молоток и соколиное перо, и они упали вместе. На Земле на таких высотах воздух почти не успевает затормозить телефон, ключи или человека.',
+  srcName: 'NASA, «Аполлон-15»: опыт с молотком и пером, 1971',
+  init(S) {
+    S.sc = pick([
+      {h: .75, o: 0, q: 'Телефон соскользнул со стола высотой 75 см. С какой скоростью он ударится о пол?'},
+      {h: 1.5, o: 0, q: 'Телефон выскользнул из руки на высоте полутора метров. С какой скоростью он ударится о пол?'},
+      {h: 5, o: 1, q: 'Ключи уронили с балкона второго этажа, с высоты 5 метров. С какой скоростью они ударятся о землю?'},
+      {h: 10, o: 2, q: 'Спортсмен шагнул с десятиметровой вышки в бассейне. С какой скоростью он войдёт в воду?'}]);
+    S.h = S.sc.h; S.vm = Math.sqrt(2 * 9.81 * S.h); S.T = Math.sqrt(2 * S.h / 9.81); S.kmh = S.vm * 3.6; S.lo = S.hi = S.kmh; S.truth = fnum(S.kmh, 3) + ' км/ч'; S.runMs = 500 + S.T * 1000 + 800 + 1000;
+  },
+  calc(S) { return ['Без сопротивления воздуха скорость в конце падения: v = √(2 × g × h), где g = 9,81 м/с².', 'v = √(2 × 9,81 × ' + tz(ru(S.h, 2)) + ') ≈ ' + ru(S.vm, 2) + ' м/с.', 'В километрах в час: ' + ru(S.vm, 2) + ' × 3,6 ≈ ' + S.truth + '.', 'Само падение длится √(2h / g) ≈ ' + ru(S.T, 2) + ' с.']; },
+  draw(g, S, ph, ms, guess) {
+    const e = ph === 'guess' ? -1 : ph === 'result' ? 1e9 : ms, GY = 430, Ky = 340 / Math.max(S.h, 2.2), Yh = m => GY - m * Ky, o = S.sc.o;
+    const t = e < 0 ? 0 : Math.min(S.T, Math.max(0, (e - 500) / 1000)), landed = e >= 500 + S.T * 1000, y = Yh(Math.max(0, S.h - 4.905 * t * t)), x = 208, yl = Yh(S.h);
+    if (o === 2) { g.fillStyle = 'rgba(60,140,220,.4)'; g.fillRect(128, GY, 170, 30); }
+    g.strokeStyle = C.line; g.lineWidth = 2; g.beginPath(); g.moveTo(14, GY); g.lineTo(300, GY); g.stroke();
+    const st = S.h > 6 ? 2 : S.h > 3 ? 1 : .5;
+    g.lineWidth = 1; g.beginPath(); g.moveTo(22, GY); g.lineTo(22, yl); for (let m = 0; m <= S.h + 1e-6; m += st) { g.moveTo(22, Yh(m)); g.lineTo(30, Yh(m)); } g.stroke();
+    for (let m = st; m <= S.h + 1e-6; m += st) gtxt(g, tz(ru(m, 1)) + ' м', 34, Yh(m), 10, C.line, 'left');
+    standFig(g, 96, GY, 1.7 * Ky, 'rgba(176,194,255,.4)');
+    g.fillStyle = '#5b6aa8'; g.fillRect(128, yl, 62, 6); g.fillRect(128, yl, 6, GY - yl);
+    if (o === 2) standFig(g, x, y, 1.75 * Ky, SKIN);
+    else { g.save(); g.translate(x, y - 7); g.rotate(e < 0 ? 0 : t * 5); if (o === 0) { rrect(g, -12, -6, 24, 12, 3); g.fillStyle = '#dfe7ff'; g.fill(); g.fillStyle = INKD; g.fillRect(-9, -4, 18, 8); } else { g.strokeStyle = '#f2c14e'; g.lineWidth = 3; g.beginPath(); g.arc(-4, 0, 5, 0, TAU); g.stroke(); g.fillStyle = '#f2c14e'; g.fillRect(0, -2, 12, 4); g.fillRect(8, 0, 3, 5); } g.restore(); }
+    if (e >= 0 && !landed) gtxt(g, fnum(Math.max(.1, 9.81 * t * 3.6), 2) + ' км/ч', x + 18, y - 10, 12, C.hit, 'left', true);
+    const k = !landed ? 0 : ph === 'result' ? 1 : ease((e - 500 - S.T * 1000) / 800), cur = landed ? Math.exp(Math.log(S.kmh) * k) : null;
+    if (landed) { g.strokeStyle = C.hit; g.lineWidth = 3; g.globalAlpha = 1 - .6 * k; g.beginPath(); g.ellipse(x, GY, 10 + 22 * k, 3 + 6 * k, 0, 0, TAU); g.stroke(); g.globalAlpha = 1; gtxt(g, S.truth, x + 18, GY - 18, 13, C.hit, 'left', true); }
+    const Y = gruler(g, 430, 440, 44, 1, 300, [{v: 5, t: 'пешеход 5'}, {v: 10, t: 'бег трусцой 10'}, {v: 20, t: 'велосипед 20'}, {v: 37, t: 'рекорд на 100 м 37'}, {v: 60, t: 'машина в городе 60'}, {v: 120, t: 'трасса 120'}, {v: 250, t: 'скорый поезд 250'}], cur);
+    gtxt(g, 'км/ч', 430, 22, 11, C.line);
+    gptr(g, 430, Y(guess), C.you, 'вы: ' + this.fmt(guess), true);
+    if (landed) gptr(g, 430, Y(cur), C.ink, k >= 1 ? 'в конце: ' + S.truth : '', false);
+  }
+},
+{
+  name: 'Две пиццы', lvl: 2, min: 20, max: 90, step: .5, tol: .02,
+  fmt: v => tz(ru(v, 1)) + ' см',
+  question: S => (S.k === 2 ? 'Вместо двух пицц' : 'Вместо трёх пицц') + ' диаметром ' + S.d + ' см хотят заказать одну большую. Какого диаметра она должна быть, чтобы пиццы получилось столько же?',
+  hint: 'Вид сверху, всё в одном масштабе. Слева маленькие пиццы, справа большая: её размер задаёт ползунок.',
+  why: 'Площадь круга растёт как квадрат диаметра. Чтобы пиццы стало вдвое больше, диаметр достаточно увеличить в 1,41 раза, а пицца вдвое большего диаметра заменяет сразу четыре.',
+  fact: 'В 2014 году журналист NPR Куокчунг Буй собрал 74 476 цен из 3 678 пиццерий США. Вывод: большая пицца почти всегда выгоднее, потому что её цена растёт гораздо медленнее площади.',
+  srcName: 'NPR Planet Money: 74,476 Reasons You Should Always Get The Bigger Pizza, 2014', srcUrl: 'https://www.npr.org/sections/money/2014/02/26/282132576/74-476-reasons-you-should-always-get-the-bigger-pizza',
+  init(S) { S.k = pick([2, 2, 3]); S.d = pick([20, 22, 25, 28, 30]); S.D = S.d * Math.sqrt(S.k); S.lo = S.hi = S.D; S.truth = ru(S.D, 1) + ' см'; S.runMs = S.k * 1100 + 1400; },
+  calc(S) { return ['Площадь круга: S = π × d² / 4.', (S.k === 2 ? 'Две пиццы' : 'Три пиццы') + ' по ' + S.d + ' см: ' + S.k + ' × π × ' + S.d + '² / 4 ≈ ' + Math.round(S.k * Math.PI * S.d * S.d / 4).toLocaleString('ru-RU') + ' см².', 'Диаметр одного круга такой же площади: D = ' + S.d + ' × √' + S.k + ' ≈ ' + S.truth + '.', 'Пицца вдвое большего диаметра, ' + 2 * S.d + ' см, заменила бы четыре такие пиццы.']; },
+  draw(g, S, ph, ms, guess) {
+    const K = 4.3, bx = 420, by = 236, e = ph === 'guess' ? -1 : ph === 'result' ? 1e9 : ms, r0 = S.d / 2 * K, Rt = S.D / 2 * K, Rg = guess / 2 * K, ys = S.k === 2 ? [128, 344] : [84, 236, 388];
+    const pizza = (x, y, r, a0, a1) => {
+      if (a1 - a0 <= 1e-6) return;
+      g.save(); g.beginPath(); g.moveTo(x, y); g.arc(x, y, r, a0 - Math.PI / 2, a1 - Math.PI / 2); g.closePath(); g.clip();
+      g.fillStyle = '#c98a3c'; g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
+      g.fillStyle = '#f3cf63'; g.beginPath(); g.arc(x, y, r * .88, 0, TAU); g.fill();
+      g.fillStyle = '#c8402f'; for (let i = 0; i < 9; i++) { const a = i * 2.4 + .5, d = [.25, .55, .72][i % 3] * r; g.beginPath(); g.arc(x + d * Math.cos(a), y + d * Math.sin(a), r * .1, 0, TAU); g.fill(); }
+      g.restore();
+    };
+    let fill = 0;
+    ys.forEach((y, i) => { const f = e < 0 ? 0 : clamp01((e - i * 1100) / 900); fill += f; g.strokeStyle = C.dim; g.lineWidth = 1; g.beginPath(); g.arc(110, y, r0 + 3, 0, TAU); g.stroke(); pizza(110, y, r0, f * TAU, TAU); });
+    gtxt(g, S.k + ' × ' + S.d + ' см', 110, S.k === 2 ? 236 : 468, 12, C.ink, 'center', true);
+    if (e < 0) { g.globalAlpha = .3; pizza(bx, by, Rg, 0, TAU); g.globalAlpha = 1; }
+    else { pizza(bx, by, Rt, 0, fill / S.k * TAU); if (fill >= S.k - 1e-6) { g.strokeStyle = C.ink; g.lineWidth = 2; g.beginPath(); g.arc(bx, by, Rt, 0, TAU); g.stroke(); } }
+    g.setLineDash([7, 6]); g.strokeStyle = C.you; g.lineWidth = 2.5; g.beginPath(); g.arc(bx, by, Rg, 0, TAU); g.stroke(); g.setLineDash([]);
+    gtxt(g, 'ваш прогноз: ' + this.fmt(guess), bx, Math.max(18, by - Rg - 14), 12, C.you, 'center', true);
+    if (e >= S.k * 1100) {
+      const pct = Math.round((guess * guess / (S.D * S.D) - 1) * 100), y1 = Math.min(446, by + Math.max(Rt, Rg) + 16);
+      gtxt(g, 'столько же пиццы: ' + S.truth, bx, y1, 12, C.ink, 'center', true);
+      gtxt(g, pct > 0 ? 'ваша пицца больше на ' + pct + '%' : pct < 0 ? 'ваша пицца меньше на ' + (-pct) + '%' : 'по площади совпало', bx, y1 + 18, 12, C.you, 'center', true);
+    }
+  }
+},
+{
+  name: 'Горизонт', lvl: 3, min: .5, max: 500, log: true, sig: 2, tol: .03,
+  fmt: v => fnum(v, 2) + ' км',
+  question: S => S.sc.q + ' На каком расстоянии от вас проходит линия горизонта?',
+  hint: 'Схема сбоку, не в масштабе: шкала расстояний внизу сжата. Розовый кораблик стоит там, где по вашему прогнозу проходит горизонт.',
+  why: 'Земля круглая, и поверхность моря уходит вниз из-под линии взгляда. Чем выше глаза, тем дальше точка касания, но расстояние растёт медленно: как квадратный корень из высоты.',
+  fact: 'Чтобы видеть вдвое дальше, нужно подняться вчетверо выше. Поэтому на парусных кораблях вперёдсмотрящего сажали на верхушку мачты. Воздух слегка искривляет лучи, и на деле горизонт примерно на 8% дальше, чем даёт чистая геометрия, поэтому ответ указан диапазоном.',
+  srcName: 'Young A. T. Distance to the Horizon. San Diego State University', srcUrl: 'https://aty.sdsu.edu/explain/atmos_refr/horizon.html',
+  init(S) {
+    S.sc = pick([{h: 1.7, H: 30, q: 'Вы стоите у самой воды на берегу моря, глаза на высоте 1,7 м.'}, {h: 10, H: 58, q: 'Вы смотрите на море с балкона третьего этажа, глаза на высоте 10 м над водой.'}, {h: 30, H: 88, q: 'Вы поднялись на маяк, глаза на высоте 30 м над морем.'}, {h: 100, H: 120, q: 'Вы на смотровой площадке на скале, глаза на высоте 100 м над морем.'}]);
+    S.lo = 3.57 * Math.sqrt(S.sc.h); S.hi = 3.86 * Math.sqrt(S.sc.h); S.mid = Math.sqrt(S.lo * S.hi); S.truth = fnum(S.lo, 2) + '–' + fnum(S.hi, 2) + ' км'; S.runMs = 3700;
+  },
+  calc(S) { const h = tz(ru(S.sc.h, 1)); return ['Линия взгляда касается поверхности моря. По теореме Пифагора расстояние до точки касания: d = √(2 × R × h), где R = 6 371 км — радиус Земли.', 'Для h = ' + h + ' м: d = √(2 × 6 371 000 × ' + h + ') м ≈ ' + fnum(S.lo, 3) + ' км. Удобная запись: d ≈ 3,57 × √h, где d в километрах, а h в метрах.', 'Воздух преломляет свет и слегка «загибает» лучи за горизонт. Со стандартной поправкой d ≈ 3,86 × √h ≈ ' + fnum(S.hi, 3) + ' км.', 'Высота стоит под корнем: чтобы горизонт отодвинулся вдвое, подняться нужно вчетверо выше.']; },
+  draw(g, S, ph, ms, guess) {
+    const X = k => 70 + 540 * Math.log(k / .5) / Math.log(1000), SY = 210, H = S.sc.H, e = ph === 'guess' ? -1 : ph === 'result' ? 1e9 : ms;
+    const u = X(S.mid) - 70, c = e < 0 ? 0 : H / (u * u) * ease(e / 1200), ys = x => SY + c * (x - 70) * (x - 70), ey = SY - H, base = H - 28;
+    g.fillStyle = 'rgba(40,110,190,.4)'; g.beginPath(); g.moveTo(70, SY); for (let x = 70; x <= 640; x += 6) g.lineTo(x, Math.min(432, ys(x))); g.lineTo(640, 432); g.lineTo(70, 432); g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(200,230,255,.9)'; g.lineWidth = 2; g.beginPath(); g.moveTo(70, SY); for (let x = 76; x <= 640; x += 6) { if (ys(x) > 432) break; g.lineTo(x, ys(x)); } g.stroke();
+    g.fillStyle = '#2b3a78'; g.fillRect(0, SY, 70, 222);
+    if (base > 2) { g.fillStyle = '#5b6aa8'; g.fillRect(40, SY - base, 26, base); }
+    standFig(g, 54, SY - Math.max(0, base), 30, '#c9d3f0');
+    gtxt(g, tz(ru(S.sc.h, 1)) + ' м', 54, ey - 18, 11, C.ink, 'center', true);
+    g.strokeStyle = C.line; g.lineWidth = 1; g.beginPath(); g.moveTo(70, 440); g.lineTo(610, 440);
+    const tk = [.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
+    for (const k of tk) { g.moveTo(X(k), 440); g.lineTo(X(k), 447); }
+    g.stroke();
+    for (const k of tk) gtxt(g, tz(ru(k, 1)), X(k), 460, 10, C.line);
+    gtxt(g, 'км', 36, 460, 10, C.line);
+    const boat = (x, y, col) => { g.fillStyle = col; g.beginPath(); g.moveTo(x - 13, y - 7); g.lineTo(x + 13, y - 7); g.lineTo(x + 8, y); g.lineTo(x - 8, y); g.closePath(); g.fill(); g.beginPath(); g.moveTo(x, y - 9); g.lineTo(x, y - 30); g.lineTo(x + 12, y - 11); g.closePath(); g.fill(); };
+    const xg = X(guess), yg = ys(xg), xt = 70 + u, yt = ys(xt), kk = e < 1200 ? 0 : ph === 'result' ? 1 : clamp01((e - 1200) / 700);
+    if (kk > 0) {
+      const xe = 70 + 570 * kk;
+      g.setLineDash([6, 5]); g.strokeStyle = C.ink; g.lineWidth = 1.5; g.beginPath(); g.moveTo(70, ey); g.lineTo(xe, ey + (yt - ey) / u * (xe - 70)); g.stroke(); g.setLineDash([]);
+      if (xe >= xt) { boat(xt, yt, C.ink); gtxt(g, 'горизонт: ' + S.truth, xt + 22, yt - 24, 12, C.ink, 'left', true); }
+    }
+    if (yg <= 426) boat(xg, yg, C.you); else { g.fillStyle = C.you; g.beginPath(); g.moveTo(xg, 430); g.lineTo(xg - 8, 416); g.lineTo(xg + 8, 416); g.closePath(); g.fill(); }
+    gtxt(g, 'ваш прогноз: ' + this.fmt(guess), Math.min(530, Math.max(190, xg)), Math.min(yg, 426) - 46, 12, C.you, 'center', true);
+    if (kk >= 1) gtxt(g, guess > S.hi ? 'ваш кораблик уже скрыт за горизонтом' : guess < S.lo ? 'ваш кораблик ближе линии горизонта' : 'ваш кораблик стоит на горизонте', 360, 24, 13, C.ink, 'center', true);
+  }
+},
+{
+  name: 'Верёвка вокруг Земли', lvl: 3, min: 1e-6, max: 100, log: true, sig: 2, tol: .03,
+  fmt: v => fmtLen(v, 2),
+  question: S => 'Верёвка туго опоясывает ' + S.ob.t + ' по экватору. Её удлинили на ' + S.L + ' ' + plural(S.L, 'метр', 'метра', 'метров') + ' и равномерно приподняли над поверхностью по всему кругу. Какой получился зазор между верёвкой и поверхностью?',
+  hint: 'Слева планета с верёвкой, не в масштабе. Справа шкала высоты зазора с предметами для сравнения: розовая стрелка — ваш прогноз.',
+  why: 'Длина окружности равна 2π, умноженным на радиус. Добавка к длине и добавка к радиусу связаны напрямую, а сам радиус в эту связь не входит. Для планеты, мяча и монеты зазор получится одинаковым.',
+  fact: 'Задача известна как минимум с 1702 года: она вошла в учебник геометрии Уильяма Уистона, преемника Ньютона на кафедре в Кембридже. Обычно спрашивают, что пройдёт под верёвкой: лезвие ножа, кошка или автомобиль.',
+  srcName: 'Darling D. Rope-around-the-Earth puzzle. Encyclopedia of Science', srcUrl: 'https://www.daviddarling.info/encyclopedia/R/rope-around-the-Earth_puzzle.html',
+  init(S) { S.ob = pick([{t: 'Землю', c: '#2f6fbf', n: 'Земля'}, {t: 'Луну', c: '#8f97ad', n: 'Луна'}, {t: 'Марс', c: '#b5553a', n: 'Марс'}]); S.L = pick([1, 2, 5, 10]); S.gap = S.L / TAU; S.lo = S.hi = S.gap; S.truth = fmtLen(S.gap, 3); S.runMs = 600 + 1800 + 1300; },
+  calc(S) { return ['Длина окружности: C = 2π × R.', 'После удлинения: C + ' + S.L + ' м = 2π × (R + зазор).', 'Вычитаем первое равенство из второго: зазор = ' + S.L + ' м / 2π = ' + S.L + ' / 6,283 ≈ ' + S.truth + '.', 'Радиус R сократился. Поэтому ответ не зависит от того, что опоясывает верёвка: ' + S.ob.t + ', футбольный мяч или монету.']; },
+  draw(g, S, ph, ms, guess) {
+    const e = ph === 'guess' ? -1 : ph === 'result' ? 1e9 : ms, px = 128, py = 232, R = 88, k = e < 0 ? 0 : ease((e - 600) / 1800), cur = e < 0 ? null : Math.exp(lerp(Math.log(1e-6), Math.log(S.gap), k));
+    g.fillStyle = S.ob.c; g.beginPath(); g.arc(px, py, R, 0, TAU); g.fill();
+    g.fillStyle = 'rgba(255,255,255,.14)'; for (const b of [[-30, -34, 26], [28, 6, 32], [-18, 40, 18]]) { g.beginPath(); g.arc(px + b[0], py + b[1], b[2], 0, TAU); g.fill(); }
+    g.strokeStyle = '#f2c14e'; g.lineWidth = 3; g.beginPath(); g.arc(px, py, R + 2.5 + 16 * k, 0, TAU); g.stroke();
+    gtxt(g, S.ob.n + ', верёвка + ' + S.L + ' м', 16, py - R - 40, 12, C.ink, 'left', true);
+    gtxt(g, 'рисунок не в масштабе', 16, py + R + 40, 10, C.line, 'left');
+    const marks = [{v: 1e-6, t: 'бактерия 1 мкм', n: 'бактерия'}, {v: 1e-4, t: 'толщина волоса 0,1 мм', n: 'волос'}, {v: 3e-3, t: 'муравей 3 мм', n: 'муравей'}, {v: .05, t: 'мышь 5 см', n: 'мышь'}, {v: .25, t: 'кошка 25 см', n: 'кошка'}, {v: 1.7, t: 'человек 1,7 м', n: 'человек'}, {v: 5, t: 'жираф 5 м', n: 'жираф'}, {v: 30, t: 'девятиэтажка 30 м', n: 'дом'}];
+    const Y = gruler(g, 420, 440, 44, 1e-6, 100, marks, cur);
+    gtxt(g, 'высота зазора', 420, 22, 11, C.line);
+    gptr(g, 420, Y(guess), C.you, 'вы: ' + this.fmt(guess), true);
+    if (e >= 0) gptr(g, 420, Y(cur), C.ink, (k >= 1 ? 'зазор: ' : '') + fmtLen(cur, k >= 1 ? 3 : 2), false);
+    if (k >= 1) gtxt(g, 'под верёвкой пройдёт ' + marks.filter(m => m.v <= S.gap).pop().n, 16, py + R + 64, 12, C.hit, 'left', true);
+  }
+},
+{
+  name: 'Лист до Луны', lvl: 3, min: 5, max: 1e7, log: true, snap: v => v < 100 ? Math.round(v) : rsig(v, 2), tol: .04,
+  fmt: v => Math.round(v).toLocaleString('ru-RU') + ' ' + plural(Math.round(v), 'раз', 'раза', 'раз'),
+  question: S => 'Лист офисной бумаги толщиной 0,1 мм складывают пополам снова и снова. Сколько раз нужно его сложить, чтобы толщина стопки достала ' + S.tg.t + '? Представьте, что бумага это выдержит.',
+  hint: 'Шкала высоты сжата: каждое деление вверх означает рост во много раз. Цель выделена белым. Стопка начнёт расти после запуска.',
+  why: 'Каждое сложение удваивает толщину. Удвоение обманывает интуицию: первые двадцать сложений дают всего сто метров, зато следующие двадцать — уже сто тысяч километров.',
+  fact: 'На практике сложить лист больше семи-восьми раз почти невозможно. Рекорд поставила американская школьница Бритни Галливан: 27 января 2002 года она 12 раз сложила пополам ленту туалетной бумаги длиной 1 200 метров и вывела формулу, которая связывает длину листа и число сложений.',
+  srcName: 'Guinness World Records: Most times to fold a piece of paper', srcUrl: 'https://guinnessworldrecords.com/world-records/494571-most-times-to-fold-a-piece-of-paper',
+  init(S) { S.tg = pick([{t: 'до вершины Эвереста', d: 8849, i: 4}, {t: 'до Международной космической станции', d: 4e5, i: 5}, {t: 'до Луны', d: 3.844e8, i: 6}, {t: 'до Солнца', d: 1.496e11, i: 7}]); S.n = Math.ceil(Math.log2(S.tg.d / 1e-4)); S.lo = S.hi = S.n; S.truth = S.n + ' ' + plural(S.n, 'раз', 'раза', 'раз'); S.runMs = 400 + S.n * 75 + 1500; },
+  calc(S) {
+    const r = S.tg.d / 1e-4, big = r < 1e9 ? fnum(r / 1e6, 2) + ' млн' : r < 1e12 ? fnum(r / 1e9, 2) + ' млрд' : r < 1e15 ? fnum(r / 1e12, 2) + ' трлн' : fnum(r / 1e15, 2) + ' квадриллиона';
+    return ['Каждое сложение удваивает толщину: после n сложений она равна 0,1 мм × 2ⁿ.', 'Цель: ' + fmtLen(S.tg.d, 3) + '. Это в ' + big + ' раз больше толщины листа.', 'Нужно, чтобы 2ⁿ превысило это число: n = log₂ ≈ ' + ru(Math.log2(r), 1) + ', округляем вверх до ' + S.n + '.', 'Проверка: после ' + (S.n - 1) + ' сложений толщина ' + fmtLen(1e-4 * Math.pow(2, S.n - 1), 2) + ', после ' + S.n + ' уже ' + fmtLen(1e-4 * Math.pow(2, S.n), 2) + '.'];
+  },
+  draw(g, S, ph, ms, guess) {
+    const e = ph === 'guess' ? -1 : ph === 'result' ? 1e9 : ms, k = e < 0 ? 0 : Math.max(0, Math.min(S.n, Math.floor((e - 400) / 75))), h = 1e-4 * Math.pow(2, k), done = e >= 0 && k >= S.n;
+    const marks = [{v: 1e-4, t: 'лист бумаги 0,1 мм'}, {v: .03, t: 'толстая книга 3 см'}, {v: 1.7, t: 'человек 1,7 м'}, {v: 30, t: 'девятиэтажка 30 м'}, {v: 8849, t: 'Эверест 8,8 км'}, {v: 4e5, t: 'МКС 400 км'}, {v: 3.844e8, t: 'Луна 384 тыс. км'}, {v: 1.496e11, t: 'Солнце 150 млн км'}];
+    marks[S.tg.i].hot = true;
+    const Y = gruler(g, 150, 440, 44, 1e-4, 1e12, marks, e < 0 ? null : h), yt = Math.min(438, Y(h));
+    gtxt(g, 'толщина стопки', 162, 22, 11, C.line, 'left');
+    g.fillStyle = '#eef1ff'; g.fillRect(40, yt, 62, 442 - yt); g.strokeStyle = 'rgba(11,20,48,.35)'; g.lineWidth = 1; g.beginPath(); for (let y = 438; y > yt; y -= 4) { g.moveTo(40, y); g.lineTo(102, y); } g.stroke();
+    g.strokeStyle = C.line; g.lineWidth = 2; g.beginPath(); g.moveTo(20, 442); g.lineTo(122, 442); g.stroke();
+    gtxt(g, 'ваш прогноз:', 350, 32, 12, C.you, 'left', true); gtxt(g, this.fmt(guess), 350, 54, 14, C.you, 'left', true);
+    if (e < 0) return;
+    gtxt(g, 'сложений: ' + k, 350, 104, 13, C.ink, 'left', true); gtxt(g, 'толщина: ' + fmtLen(h, 2), 350, 128, 13, C.ink, 'left', true);
+    if (!done) return;
+    const hg = 1e-4 * Math.pow(2, guess);
+    gtxt(g, 'хватило: ' + S.truth, 350, 172, 14, C.hit, 'left', true);
+    gtxt(g, 'при вашем числе', 350, 222, 12, C.you, 'left', true); gtxt(g, 'толщина была бы:', 350, 242, 12, C.you, 'left', true); gtxt(g, fmtLen(hg, 2), 350, 264, 13, C.you, 'left', true);
+    const yp = Y(Math.min(1e12, hg)); g.fillStyle = C.you; g.beginPath(); g.moveTo(143, yp); g.lineTo(129, yp - 7); g.lineTo(129, yp + 7); g.closePath(); g.fill();
+  }
+},
+{
+  name: 'Автобус', lvl: 3, min: .5, max: 40, step: .5, tol: .04,
+  fmt: v => tz(ru(v, 1)) + ' мин',
+  question: S => 'Автобусы приходят на остановку нерегулярно, в среднем раз в ' + S.m + ' минут: то два подряд, то долгий перерыв. Вы приходите на остановку в случайный момент. Сколько минут в среднем придётся ждать автобуса?',
+  hint: 'Сверху отрезок времени с приходами автобусов. Снизу после запуска появится, сколько ждал каждый из 20 000 случайных пассажиров. Розовая линия — ваш прогноз.',
+  why: 'Кажется, что ждать придётся половину интервала. Но случайный пассажир чаще попадает в длинный перерыв, просто потому что длинные перерывы занимают больше времени. Когда автобусы приходят совсем случайно, среднее ожидание равно целому интервалу.',
+  fact: 'Это парадокс времени ожидания, частный случай парадокса инспекции. По той же причине средний студент учится в группе крупнее средней. Если бы автобусы ходили строго по расписанию, ждать пришлось бы вдвое меньше; реальные маршруты находятся где-то между этими крайностями.',
+  srcName: 'Feller W. An Introduction to Probability Theory and Its Applications, т. 2, 1966',
+  init(S) {
+    S.m = pick([6, 10, 15, 20]); S.lo = S.hi = S.m; S.truth = S.m + ' мин';
+    const ex = () => -Math.log(1 - Math.random()) * S.m;
+    S.W = 12 * S.m; S.bus = []; let t = 0; while (t < S.W * 1.7 || S.bus.length < 4) { t += ex(); S.bus.push(t); }
+    S.pas = []; for (let i = 0; i < 12; i++) { const a = Math.random() * S.W * .96; S.pas.push({t: a, w: S.bus.find(b => b > a) - a}); }
+    const NP = 20000, bt = [], total = S.m * 200000; t = 0; while (t < total) { t += ex(); bt.push(t); }
+    S.w = new Float32Array(NP);
+    for (let i = 0; i < NP; i++) { const a = Math.random() * total * .98; let lo = 0, hi = bt.length - 1; while (lo < hi) { const mid = (lo + hi) >> 1; if (bt[mid] > a) hi = mid; else lo = mid + 1; } S.w[i] = bt[lo] - a; }
+    S.k = 0; S.sum = 0; S.hist = new Uint32Array(41); S.runMs = 2600 + 3200 + 1400;
+  },
+  calc(S) { let s = 0; for (let i = 0; i < S.w.length; i++) s += S.w[i]; return ['Среднее ожидание случайного пассажира: E[T²] / (2 × E[T]), где T — интервал между автобусами.', 'Если автобусы ходят строго каждые ' + S.m + ' минут, получается ' + S.m + '² / (2 × ' + S.m + ') = ' + tz(ru(S.m / 2, 1)) + ' мин.', 'Если автобусы приходят совсем случайно, как в этой модели, то E[T²] = 2 × ' + S.m + '², и среднее ожидание равно ' + S.m + ' мин.', 'В симуляции 20 000 пассажиров ждали в среднем ' + ru(s / S.w.length, 1) + ' мин. Чем хуже автобусы держат расписание, тем ближе ожидание к полному интервалу.']; },
+  draw(g, S, ph, ms, guess) {
+    const e = ph === 'guess' ? -1 : ph === 'result' ? 1e9 : ms, NP = S.w.length, TX = t => 40 + t / S.W * 566, HX = v => 60 + v * 6.8, BY = 424;
+    gtxt(g, 'Приходы автобусов за ' + S.W + ' минут', 40, 22, 12, C.ink, 'left', true);
+    g.strokeStyle = C.line; g.lineWidth = 1.5; g.beginPath(); g.moveTo(40, 78); g.lineTo(606, 78); g.stroke();
+    for (const b of S.bus) if (b <= S.W) { const x = TX(b); rrect(g, x - 9, 54, 18, 12, 3); g.fillStyle = C.hit; g.fill(); g.fillStyle = INKD; g.fillRect(x - 6, 57, 4, 4); g.fillRect(x + 1, 57, 4, 4); g.strokeStyle = C.hit; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x, 66); g.lineTo(x, 84); g.stroke(); }
+    const np = e < 0 ? 0 : Math.min(12, Math.floor(e / 200) + 1);
+    for (let i = 0; i < np; i++) { const p = S.pas[i], x = TX(p.t), y = 98 + (i % 6) * 13; g.strokeStyle = C.miss; g.lineWidth = 3; g.beginPath(); g.moveTo(x, y); g.lineTo(Math.min(606, TX(p.t + p.w)), y); g.stroke(); g.fillStyle = C.ink; g.beginPath(); g.arc(x, y, 4, 0, TAU); g.fill(); }
+    if (np > 0 && e < 2600) gtxt(g, 'пассажир ' + np + ' ждёт ' + ru(S.pas[np - 1].w, 1) + ' мин', 606, 40, 12, C.ink, 'right', true);
+    if (e >= 0) { const target = e >= 1e8 ? NP : Math.round(NP * Math.pow(clamp01((e - 2600) / 3200), 2)); while (S.k < target) { const w = S.w[S.k++]; S.sum += w; S.hist[Math.min(40, Math.floor(w / 2))]++; } }
+    g.strokeStyle = C.line; g.lineWidth = 1.5; g.beginPath(); g.moveTo(60, BY); g.lineTo(HX(82), BY); for (let v = 0; v <= 80; v += 10) { g.moveTo(HX(v), BY); g.lineTo(HX(v), BY + 6); } g.stroke();
+    for (let v = 0; v <= 80; v += 20) gtxt(g, v, HX(v), BY + 18, 10, C.line);
+    gtxt(g, 'минуты ожидания', HX(40), BY + 38, 10, C.line);
+    let mx = 1; for (let i = 0; i < 41; i++) mx = Math.max(mx, S.hist[i]);
+    g.fillStyle = C.miss; for (let i = 0; i < 41; i++) { const hh = S.hist[i] / mx * 176; if (hh > 0) g.fillRect(HX(i * 2) + 1, BY - hh, 11.6, hh); }
+    if (!S.k) gtxt(g, 'здесь появится ожидание 20 000 пассажиров', 338, 320, 12, C.dim);
+    const xg = HX(guess); g.setLineDash([6, 5]); g.strokeStyle = C.you; g.lineWidth = 2.5; g.beginPath(); g.moveTo(xg, BY); g.lineTo(xg, 226); g.stroke(); g.setLineDash([]);
+    gtxt(g, 'вы: ' + this.fmt(guess), Math.min(566, Math.max(104, xg)), 214, 12, C.you, 'center', true);
+    if (S.k) { const mean = S.sum / S.k, xm = HX(Math.min(80, mean)); g.strokeStyle = C.ink; g.lineWidth = 2.5; g.beginPath(); g.moveTo(xm, BY); g.lineTo(xm, 204); g.stroke(); gtxt(g, 'среднее: ' + ru(mean, 1) + ' мин', Math.min(530, Math.max(130, xm)), 192, 12, C.ink, 'center', true); gtxt(g, 'пассажиров: ' + S.k.toLocaleString('ru-RU'), 624, 260, 11, C.line, 'right'); }
+  }
+}
+];
+//</events>
+
+if (typeof document !== 'undefined') (function () {
+  const $ = id => document.getElementById(id);
+  const cv = $('cv'), g = cv.getContext('2d');
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const nf = n => Math.round(n).toLocaleString('ru-RU');
+  const pc = (x, d = 1) => x.toFixed(d).replace('.', ',') + '%';
+  let st, ev, S, n, hits, cur, curP, raf = 0, skip = false, timer = 0, phase = '', shownAt = 0;
+
+  const G = () => st.mode === 'g';
+  const party = () => st.order.length;
+  const gval = p => { const t = p / 1000, v = ev.log ? ev.min * Math.pow(ev.max / ev.min, t) : ev.min + (ev.max - ev.min) * t, r = ev.snap ? ev.snap(v) : ev.sig ? rsig(v, ev.sig) : Math.round(v / ev.step) * ev.step; return Math.min(ev.max, Math.max(ev.min, r)); };
+  const val = x => typeof x === 'function' ? x(S) : x;
+  const gpos = v => 100 * (ev.log ? Math.log(v / ev.min) / Math.log(ev.max / ev.min) : (v - ev.min) / (ev.max - ev.min));
+  let runAt = 0;
+
+  // подпись метки не должна выходить за край сцены
+  function fit(mark, pos) {
+    const sp = mark.firstElementChild, tr = mark.parentElement.getBoundingClientRect(), box = document.querySelector('.stage').getBoundingClientRect(), w = sp.offsetWidth, c = tr.left + tr.width * pos / 100;
+    const dx = c - w / 2 < box.left + 6 ? box.left + 6 - (c - w / 2) : c + w / 2 > box.right - 6 ? box.right - 6 - (c + w / 2) : 0;
+    sp.style.transform = 'translateX(calc(-50% + ' + dx.toFixed(1) + 'px))';
+  }
+  function draw() {
+    g.setTransform(2, 0, 0, 2, 0, 0); g.clearRect(0, 0, 640, 480);
+    FS = Math.min(1.7, Math.max(1, 640 / (cv.clientWidth || 640)));
+    g.globalAlpha = 1; g.textAlign = 'left'; g.textBaseline = 'alphabetic'; g.setLineDash([]);
+    if (G()) ev.draw(g, S, phase === 'run' || phase === 'result' ? phase : 'guess', now() - runAt, gval(st.guess));
+    else ev.draw(g, S, cur, curP);
+  }
+  function show(ph) {
+    phase = ph; shownAt = now(); document.querySelector('.meter').classList.toggle('done', ph === 'result');
+    $('guessBox').hidden = phase !== 'guess'; $('runBox').hidden = phase !== 'run'; $('resultBox').hidden = phase !== 'result';
+  }
+  function header() {
+    [...$('steps').children].forEach((li, i) => { li.className = i < st.results.length ? 'done' : i === st.round ? 'now' : ''; });
+    $('total').textContent = nf(st.results.reduce((a, r) => a + r.pts, 0));
+    $('maxTotal').textContent = $('finalMax').textContent = nf(party() * MAX_PTS);
+    $('modeP').setAttribute('aria-pressed', !G()); $('modeG').setAttribute('aria-pressed', G());
+  }
+  function setGuess(v) {
+    st.guess = v; $('guess').value = v;
+    if (G()) { const t = ev.fmt(gval(v)); $('guessNum').textContent = t; $('youMark').style.left = v / 10 + '%'; $('youLbl').textContent = 'вы ' + t; fit($('youMark'), v / 10); if (phase === 'guess') draw(); return; }
+    $('guessNum').textContent = v;
+    $('youMark').style.left = v + '%'; $('youLbl').textContent = 'вы ' + v + '%'; fit($('youMark'), v);
+  }
+  function meter() {
+    const f = n ? hits / n * 100 : 0;
+    $('fill').style.width = f + '%';
+    $('readout').innerHTML = 'Попыток: ' + nf(n) + ' из ' + nf(N) + ' · событие случилось в <b>' + pc(f) + '</b>';
+  }
+
+  function loadRound() {
+    cancelAnimationFrame(raf); clearTimeout(timer);
+    if ($('steps').children.length !== party()) $('steps').innerHTML = '<li></li>'.repeat(party());
+    if (st.round >= party()) return finale();
+    $('board').hidden = false; $('final').hidden = true;
+    ev = (G() ? GAUGE : EVENTS)[st.order[st.round]]; S = {}; ev.init(S); n = 0; hits = 0; cur = null; curP = 0; skip = false; runAt = now(); S.still = reduced;
+    $('question').textContent = val(ev.question); $('cap').textContent = ev.hint || '';
+    $('fill').style.width = '0'; $('truthMark').hidden = true; $('band').hidden = true;
+    const sl = $('guess'); sl.min = 0; sl.max = G() ? 1000 : 100; sl.step = 1;
+    $('guessUnit').hidden = G(); $('guessLbl').textContent = G() ? 'Ваш прогноз' : 'Ваш прогноз вероятности';
+    $('lbl2').textContent = G() ? 'В реальности' : 'Точно'; $('lbl3').textContent = G() ? 'Ошибка' : 'Симуляция';
+    if (G()) {
+      $('roundLbl').textContent = 'Глазомер · ' + (st.round + 1) + ' из ' + party() + ' · ' + LVL[ev.lvl] + ' · ' + ev.name;
+      $('endL').textContent = ev.fmt(ev.min); $('endR').textContent = ev.fmt(ev.max);
+      $('readout').textContent = 'Поставьте прогноз и посмотрите, что произойдёт на самом деле.';
+      $('runBtn').textContent = 'Показать, что будет'; $('runNote').textContent = 'Смотрим, что произойдёт на самом деле.';
+    } else {
+      $('roundLbl').textContent = 'Раунд ' + (st.round + 1) + ' из ' + party() + ' · ' + LVL[ev.lvl] + ' · ' + ev.name + (ev.kind === 'm' ? ' · измерено в опыте' : '');
+      $('endL').textContent = '0%'; $('endR').textContent = '100%';
+      $('readout').textContent = nf(N) + ' попыток ждут вашего прогноза.';
+      $('runBtn').textContent = 'Запустить 10 000 попыток'; $('runNote').textContent = 'Первые попытки идут медленно, дальше быстрее. Жёлтая полоса показывает долю удачных.';
+    }
+    show('guess'); setGuess(st.guess); header(); draw();
+    if (G() && ev.live && !reduced) { const tick = () => { if (phase !== 'guess' || !G()) return; draw(); raf = requestAnimationFrame(tick); }; raf = requestAnimationFrame(tick); }
+  }
+
+  function runG() {
+    cancelAnimationFrame(raf); show('run'); skip = false; runAt = now();
+    if (reduced) return endG();
+    const frame = () => { if (skip || now() - runAt >= S.runMs) return endG(); draw(); raf = requestAnimationFrame(frame); };
+    raf = requestAnimationFrame(frame);
+  }
+  function endG() {
+    if (phase !== 'run') return;
+    cancelAnimationFrame(raf);
+    const v = gval(st.guess), {e, pts} = gscore(v, S.lo, S.hi, ev.tol), ratio = Math.exp(e);
+    st.results.push({name: ev.name, lvl: ev.lvl, guess: ev.fmt(v), exact: S.truth, pts, g: 1});
+    const a = gpos(S.lo), b = gpos(S.hi);
+    $('truthMark').hidden = false; $('truthMark').style.left = (a + b) / 2 + '%'; $('truthLbl').textContent = (S.lo === S.hi ? 'точно ' : 'в реальности ') + S.truth; fit($('truthMark'), (a + b) / 2);
+    if (S.hi > S.lo) { $('band').hidden = false; $('band').style.left = a + '%'; $('band').style.width = (b - a) + '%'; }
+    $('word').textContent = e <= ev.tol ? 'В яблочко' : e <= .1 ? 'Очень близко' : e <= .25 ? 'Рядом' : e <= .6 ? 'Далековато' : 'Мимо';
+    $('cYou').textContent = ev.fmt(v); $('cExact').textContent = S.truth;
+    $('cSim').textContent = e === 0 ? 'нет' : ratio < 2 ? Math.max(1, Math.round((ratio - 1) * 100)) + '%' : 'в ' + ratio.toFixed(1).replace('.', ',') + ' раза';
+    $('readout').textContent = 'Ваш прогноз: ' + ev.fmt(v) + ' · в реальности: ' + S.truth;
+    fillCard(ev.calc(S)); show('result'); draw(); header(); count($('pts'), pts, '+');
+  }
+  function fillCard(steps) {
+    $('calcBox').open = false; $('calc').textContent = ''; steps.forEach(t => { const li = document.createElement('li'); li.textContent = t; $('calc').appendChild(li); });
+    $('why').textContent = val(ev.why); $('fact').textContent = val(ev.fact);
+    const url = val(ev.srcUrl); $('src').textContent = val(ev.srcName); url ? $('src').setAttribute('href', url) : $('src').removeAttribute('href');
+    $('nextBtn').textContent = st.round + 1 < party() ? 'Следующий раунд' : 'Итоги партии';
+  }
+
+  function commit(r) { n++; if (r.hit) hits++; ev.commit(S, r); }
+  function rest() { if (cur) { commit(cur); cur = null; } while (n < N) commit(ev.trial(S)); }
+
+  function run() {
+    if (phase !== 'guess' || now() - shownAt < 350) return;
+    if (G()) return runG();
+    show('run'); skip = false; S.fast = false;
+    if (reduced) { rest(); return end(); }
+    let i = 0, t0 = null, fast = false;
+    cur = ev.trial(S); curP = 0;
+    const frame = ts => {
+      if (skip) { rest(); return end(); }
+      if (t0 === null) t0 = ts;
+      if (!fast) {
+        const p = (ts - t0) / ev.slowMs; curP = Math.min(1, p / .7);
+        if (p >= 1) { commit(cur); i++; t0 = ts; curP = 0; if (i < SLOW) cur = ev.trial(S); else { cur = null; fast = true; S.fast = true; } }
+      } else {
+        const p = Math.min(1, (ts - t0) / FAST_MS), target = Math.round(SLOW + (N - SLOW) * p * p);
+        while (n < target) commit(ev.trial(S));
+        if (p >= 1) { S.fast = false; draw(); meter(); timer = setTimeout(end, 700); return; }
+      }
+      draw(); meter(); raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+  }
+
+  function end() {
+    if (phase !== 'run') return;
+    cancelAnimationFrame(raf); clearTimeout(timer); S.fast = false; if (S.balls) S.balls = []; cur = null; draw(); meter();
+    const exact = ev.exact, {err, pts} = score(st.guess, exact);
+    st.results.push({name: ev.name, lvl: ev.lvl, guess: st.guess, exact, pts});
+    $('truthMark').hidden = false; $('truthMark').style.left = exact * 100 + '%'; $('truthLbl').textContent = 'точно ' + pc(exact * 100); fit($('truthMark'), exact * 100);
+    $('word').textContent = err <= 1 ? 'В яблочко' : err <= 5 ? 'Очень близко' : err <= 10 ? 'Рядом' : err <= 20 ? 'Далековато' : 'Мимо';
+    $('cYou').textContent = st.guess + '%'; $('cExact').textContent = pc(exact * 100); $('cSim').textContent = pc(hits / n * 100);
+    fillCard(ev.calc);
+    show('result'); header(); count($('pts'), pts, '+');
+  }
+  function count(el, to, pre = '') {
+    if (reduced) { el.textContent = pre + nf(to); return; }
+    const t0 = now(), step = () => { const p = Math.min(1, (now() - t0) / 900), e = 1 - Math.pow(1 - p, 3); el.textContent = pre + nf(to * e); if (p < 1) requestAnimationFrame(step); };
+    step();
+  }
+
+  function finale() {
+    phase = 'final'; $('board').hidden = true; $('final').hidden = false; header();
+    const sum = st.results.reduce((a, r) => a + r.pts, 0);
+    count($('finalScore'), sum);
+    const share = sum / (party() * MAX_PTS);
+    $('moreNote').textContent = G() ? 'В «Глазомере» 12 уровней, по четыре каждой сложности. Числа в заданиях каждый раз новые.' : 'В игре 34 уровня: 12 лёгких, 12 средних и 10 сложных. Партия идёт двумя волнами: лёгкий, средний, сложный.';
+    $('rank').textContent = share >= .85 ? 'Глаз-алмаз' : share >= .625 ? 'Хорошее чутьё' : share >= .375 ? 'Интуиция иногда подводит' : 'Случайность победила';
+    const tb = $('rows'); tb.textContent = '';
+    st.results.forEach(r => {
+      const tr = document.createElement('tr');
+      [[r.name, ''], [(LVL[r.lvl] || '').split(' ')[0], ''], [r.g ? r.guess : r.guess + '%', 'y'], [r.g ? r.exact : pc(r.exact * 100), ''], [nf(r.pts), 'p']].forEach(([t, c]) => { const td = document.createElement('td'); td.textContent = t; td.className = c; tr.appendChild(td); });
+      tb.appendChild(tr);
+    });
+  }
+
+  $('guess').addEventListener('input', e => { if (phase === 'guess') setGuess(+e.target.value); else e.target.value = st.guess; });
+  addEventListener('resize', () => { if (phase === 'final' || !ev) return; fit($('youMark'), parseFloat($('youMark').style.left) || 0); if (!$('truthMark').hidden) fit($('truthMark'), parseFloat($('truthMark').style.left) || 0); if (phase !== 'run') draw(); });
+  $('runBtn').addEventListener('click', run);
+  $('skipBtn').addEventListener('click', () => { if (phase === 'run') skip = true; });
+  $('nextBtn').addEventListener('click', () => { if (phase !== 'result' || now() - shownAt < 350) return; st.round++; st.guess = G() ? 500 : 50; loadRound(); });
+  const fresh = m => m === 'g' ? {mode: 'g', round: 0, results: [], guess: 500, order: deal(GAUGE, 'naglaz-gtiers')} : {mode: 'p', round: 0, results: [], guess: 50, order: deal()};
+  $('againBtn').addEventListener('click', () => { st = fresh(st.mode); loadRound(); });
+  $('modeP').addEventListener('click', () => { if (G()) { st = fresh('p'); loadRound(); } });
+  $('modeG').addEventListener('click', () => { if (!G()) { st = fresh('g'); loadRound(); } });
+
+  function deal(list, key) {
+    list = list || EVENTS; key = key || 'naglaz-tiers';
+    let q = {};
+    try { q = JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch (e) {}
+    const order = [];
+    PATTERN.forEach(l => {
+      let a = Array.isArray(q[l]) ? q[l].filter((i, n) => list[i] && list[i].lvl === l && !order.includes(i) && q[l].indexOf(i) === n) : [];
+      if (!a.length) a = shuffle(list.map((_, i) => i).filter(i => list[i].lvl === l && !order.includes(i)));
+      order.push(a.shift()); q[l] = a;
+    });
+    try { localStorage.setItem(key, JSON.stringify(q)); } catch (e) {}
+    return order;
+  }
+  window.__naglaz = () => G() && ev && S ? {name: ev.name, lvl: ev.lvl, lo: S.lo, hi: S.hi, tol: ev.tol, v: gval(st.guess), truth: S.truth, min: ev.min, max: ev.max, runMs: S.runMs} : null;
+  function start(data) {
+    const ok = data && data.mode !== 'g' && Array.isArray(data.order) && data.order.length === PARTY && data.order.every(i => EVENTS[i]);
+    const res = ok && Array.isArray(data.results) ? data.results.slice(0, PARTY) : [];
+    st = data && data.mode === 'g' ? fresh('g') : {mode: 'p', round: res.length, results: res, guess: Number.isFinite(data && data.guess) ? data.guess : 50, order: ok ? data.order : deal()};
+    loadRound();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (!raf || $('runBox').hidden) draw(); });
+  }
+  window.claude?.hot?.snapshot?.(() => ({mode: st.mode, order: st.order, results: st.results.slice(0, st.round + ($('resultBox').hidden ? 0 : 1)), guess: st.guess}));
+  window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
+})();
+</script>
+<script>
+/* Telegram Mini App: корректно раскрывает игру, красит шапку под тему и вибрирует на результат.
+   Вне Telegram (обычный браузер) блок молча завершается — игра работает как обычно. */
+(function () {
+  var WA = window.Telegram && window.Telegram.WebApp;
+  if (!WA) return;
+  try {
+    WA.ready();
+    WA.expand();
+    WA.setHeaderColor('#0b1430');
+    WA.setBackgroundColor('#0b1430');
+  } catch (e) {}
+  function bump(kind) { try { WA.HapticFeedback.impactOccurred(kind); } catch (e) {} }
+  document.addEventListener('click', function (e) {
+    var id = e.target && e.target.id;
+    if (id === 'runBtn' || id === 'nextBtn' || id === 'againBtn') bump('light');
+  });
+  var prev = { result: true, final: true };
+  new MutationObserver(function () {
+    var r = document.getElementById('resultBox'), f = document.getElementById('final');
+    var rh = !r || r.hidden, fh = !f || f.hidden;
+    if (prev.result && !rh) bump('medium');
+    if (prev.final && !fh) bump('heavy');
+    prev.result = rh; prev.final = fh;
+  }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['hidden'] });
+})();
+</script>
+</body>
+</html>
